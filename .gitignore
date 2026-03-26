@@ -1,0 +1,7 @@
+.build/
+dist/
+.swiftpm/
+Frameworks/sherpa-onnx/lib/*.dylib
+.build-sherpa/
+.DS_Store
+*.log
