@@ -66,13 +66,20 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>VoicePad needs microphone access to record your voice for transcription.</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
 </dict>
 </plist>
 PLIST
 
-# 7. Sign with VoicePad Dev certificate (preserves TCC permissions across rebuilds)
+# 7. Copy app icon
+if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
+    cp "$PROJECT_DIR/Resources/AppIcon.icns" "$CONTENTS/Resources/"
+fi
+
+# 8. Sign with VoicePad Dev certificate (preserves TCC permissions across rebuilds)
 echo "Signing..."
 # Sign embedded frameworks first, then the app bundle
 for dylib in "$CONTENTS/Frameworks/"*.dylib; do
