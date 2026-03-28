@@ -1,8 +1,10 @@
 import Foundation
 
-/// Post-processes transcribed text: capitalization, punctuation, cleanup.
+/// Post-processes transcribed text: SenseVoice tag removal, deterministic corrections,
+/// capitalization, punctuation cleanup.
 struct TextProcessor {
     /// Process raw transcription output into clean text.
+    /// Applies pre-LLM alias corrections. Post-LLM corrections are applied separately.
     func process(_ text: String) -> String {
         var result = text.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -15,7 +17,20 @@ struct TextProcessor {
         // Clean up spacing around punctuation
         result = cleanPunctuation(result)
 
+        // Apply deterministic pre-corrections via vocabulary aliases
+        let aliases = VocabularyStore.shared.load().aliases
+        if !aliases.isEmpty {
+            result = VocabularyStore.shared.applyAliases(result, aliases: aliases)
+        }
+
         return result
+    }
+
+    /// Apply post-LLM corrections (re-apply aliases to catch LLM alterations).
+    func applyPostCorrections(_ text: String) -> String {
+        let aliases = VocabularyStore.shared.load().aliases
+        guard !aliases.isEmpty else { return text }
+        return VocabularyStore.shared.applyAliases(text, aliases: aliases)
     }
 
     private func removeSenseVoiceTags(_ text: String) -> String {

@@ -15,12 +15,152 @@ final class AudioEngine {
     private var isRecording = false
     private var onChunk: (([Float], Float) -> Void)?
     private var chunkCount = 0
-    private var engineRunning = false
+    private(set) var engineRunning = false
+    private(set) var isSleeping = false
+
+    // CoreAudio device-change listener
+    private var deviceChangeListenerInstalled = false
 
     // Pre-roll ring buffer: keeps last 1.5s of converted 16kHz mono samples
     private let preRollLock = NSLock()
     private var preRollBuffer: [Float] = []
     private let preRollMaxSamples: Int = 24000 // 1.5s at 16kHz
+
+    // MARK: - Microphone Selection
+
+    /// Returns list of available input audio devices: (uniqueID, name).
+    func availableInputDevices() -> [(id: String, name: String)] {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size)
+
+        let deviceCount = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size, &deviceIDs)
+
+        var results: [(id: String, name: String)] = []
+        for deviceID in deviceIDs {
+            // Check if device has input channels
+            var inputAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreamConfiguration,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var bufferListSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(deviceID, &inputAddress, 0, nil, &bufferListSize) == noErr else { continue }
+
+            let bufferListPointer = UnsafeMutablePointer<AudioBufferList>.allocate(capacity: 1)
+            defer { bufferListPointer.deallocate() }
+            guard AudioObjectGetPropertyData(deviceID, &inputAddress, 0, nil, &bufferListSize, bufferListPointer) == noErr else { continue }
+
+            let bufferList = UnsafeMutableAudioBufferListPointer(bufferListPointer)
+            let inputChannels = bufferList.reduce(0) { $0 + Int($1.mNumberChannels) }
+            guard inputChannels > 0 else { continue }
+
+            // Get device name
+            var nameAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceNameCFString,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var name: CFString = "" as CFString
+            var nameSize = UInt32(MemoryLayout<CFString>.size)
+            AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name)
+
+            // Get device UID
+            var uidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var uid: CFString = "" as CFString
+            var uidSize = UInt32(MemoryLayout<CFString>.size)
+            AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &uid)
+
+            results.append((id: uid as String, name: name as String))
+        }
+        return results
+    }
+
+    /// Set the input device by unique ID. Pass nil for system default.
+    /// Re-prepares the engine with the new device.
+    func setInputDevice(uniqueID: String?) {
+        if let uniqueID {
+            UserDefaults.standard.set(uniqueID, forKey: "selectedMicID")
+        } else {
+            UserDefaults.standard.removeObject(forKey: "selectedMicID")
+        }
+
+        // Apply the device selection
+        applyDeviceSelection(uniqueID: uniqueID)
+
+        // Re-prepare with new device
+        if engineRunning {
+            engine?.stop()
+            engineRunning = false
+            engine?.inputNode.removeTap(onBus: 0)
+            engine = nil
+            prepare()
+        }
+    }
+
+    /// The currently selected mic unique ID, or nil for system default.
+    var selectedMicID: String? {
+        UserDefaults.standard.string(forKey: "selectedMicID")
+    }
+
+    /// Apply the stored device selection to the audio engine.
+    private func applyDeviceSelection(uniqueID: String?) {
+        guard let uniqueID else { return }
+
+        // Find the AudioDeviceID for this uniqueID
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size)
+
+        let deviceCount = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size, &deviceIDs)
+
+        for deviceID in deviceIDs {
+            var uidAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceUID,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var uid: CFString = "" as CFString
+            var uidSize = UInt32(MemoryLayout<CFString>.size)
+            AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &uid)
+
+            if uid as String == uniqueID {
+                // Set this device as the default input for our audio unit
+                var mutableDeviceID = deviceID
+                var inputAddress = AudioObjectPropertyAddress(
+                    mSelector: kAudioHardwarePropertyDefaultInputDevice,
+                    mScope: kAudioObjectPropertyScopeGlobal,
+                    mElement: kAudioObjectPropertyElementMain
+                )
+                AudioObjectSetPropertyData(
+                    AudioObjectID(kAudioObjectSystemObject),
+                    &inputAddress,
+                    0, nil,
+                    UInt32(MemoryLayout<AudioDeviceID>.size),
+                    &mutableDeviceID
+                )
+                vpLog("[AudioEngine] Set input device to \(uniqueID) (deviceID=\(deviceID))")
+                return
+            }
+        }
+        vpLog("[AudioEngine] Device \(uniqueID) not found — using system default")
+    }
 
     /// Check if a real audio input device is available.
     private func hasInputDevice() -> Bool {
@@ -78,9 +218,25 @@ final class AudioEngine {
     /// Start the audio engine and install a permanent tap.
     /// Call once at app startup. The engine stays running in the background.
     func prepare() {
+        installDeviceChangeListener()
+
         guard hasInputDevice() else {
             vpLog("[AudioEngine] No input device available — skipping engine setup")
             return
+        }
+
+        // Clean up old engine before creating a new one
+        if let oldEngine = engine {
+            vpLog("[AudioEngine] Cleaning up previous engine before re-prepare")
+            oldEngine.inputNode.removeTap(onBus: 0)
+            oldEngine.stop()
+            engine = nil
+            engineRunning = false
+        }
+
+        // Apply stored mic selection before creating engine
+        if let storedMic = selectedMicID {
+            applyDeviceSelection(uniqueID: storedMic)
         }
 
         let eng = AVAudioEngine()
@@ -172,6 +328,10 @@ final class AudioEngine {
             vpLog("[AudioEngine] engine started (always-on mode)")
         } catch {
             vpLog("[AudioEngine] FAILED to start engine: \(error)")
+            eng.inputNode.removeTap(onBus: 0)
+            eng.stop()
+            engine = nil
+            engineRunning = false
         }
     }
 
@@ -216,6 +376,68 @@ final class AudioEngine {
 
         vpLog("[AudioEngine] recording started (with pre-roll)")
         return true
+    }
+
+    /// Put the engine to sleep — stops the audio engine and releases resources.
+    /// Call `wake()` or `prepare()` to restart.
+    func sleep() {
+        guard engineRunning else { return }
+        vpLog("[AudioEngine] going to sleep — stopping engine to save resources")
+        engine?.inputNode.removeTap(onBus: 0)
+        engine?.stop()
+        engine = nil
+        engineRunning = false
+        isSleeping = true
+
+        preRollLock.lock()
+        preRollBuffer.removeAll()
+        preRollLock.unlock()
+    }
+
+    /// Wake the engine from sleep. Returns true if successfully restarted.
+    @discardableResult
+    func wake() -> Bool {
+        guard isSleeping else { return engineRunning }
+        vpLog("[AudioEngine] waking up from sleep")
+        isSleeping = false
+        prepare()
+        return engineRunning
+    }
+
+    // MARK: - Device Change Listener
+
+    /// Install a CoreAudio listener that auto-prepares when an input device appears.
+    func installDeviceChangeListener() {
+        guard !deviceChangeListenerInstalled else { return }
+
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        let status = AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject),
+            &propertyAddress,
+            DispatchQueue.main
+        ) { [weak self] _, _ in
+            guard let self else { return }
+            vpLog("[AudioEngine] Default input device changed")
+            if !self.engineRunning && !self.isRecording {
+                vpLog("[AudioEngine] Attempting auto-prepare after device change")
+                self.isSleeping = false
+                self.prepare()
+            }
+        }
+
+        if status == noErr {
+            deviceChangeListenerInstalled = true
+            vpLog("[AudioEngine] Device change listener installed")
+        } else {
+            vpLog("[AudioEngine] Failed to install device change listener: \(status)")
+        }
+        _ = selfPtr // suppress unused warning
     }
 
     /// Stop collecting and return the full sample buffer.

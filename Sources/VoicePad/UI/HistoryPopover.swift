@@ -62,6 +62,12 @@ private final class HistoryViewController: NSViewController {
         tableView.target = self
         tableView.doubleAction = #selector(copyEntry)
 
+        // Right-click context menu
+        let contextMenu = NSMenu()
+        contextMenu.addItem(withTitle: "Copy", action: #selector(copySelectedEntry), keyEquivalent: "c")
+        contextMenu.addItem(withTitle: "Edit & Learn...", action: #selector(editAndLearn), keyEquivalent: "")
+        tableView.menu = contextMenu
+
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
         scrollView.translatesAutoresizingMaskIntoConstraints = false
@@ -104,6 +110,69 @@ private final class HistoryViewController: NSViewController {
         let text = entries[row].text
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func copySelectedEntry() {
+        let row = tableView.selectedRow
+        guard row >= 0, row < entries.count else { return }
+        let text = entries[row].text
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    @objc private func editAndLearn() {
+        let row = tableView.clickedRow >= 0 ? tableView.clickedRow : tableView.selectedRow
+        guard row >= 0, row < entries.count else { return }
+        let entry = entries[row]
+
+        // Show edit dialog
+        let alert = NSAlert()
+        alert.messageText = "Edit & Learn"
+        alert.informativeText = "Edit the transcript below. Changes will be learned as vocabulary corrections."
+        alert.addButton(withTitle: "Learn")
+        alert.addButton(withTitle: "Cancel")
+
+        let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 340, height: 120))
+        textView.string = entry.text
+        textView.isEditable = true
+        textView.isRichText = false
+        textView.font = .systemFont(ofSize: 13)
+        textView.isVerticallyResizable = true
+        textView.textContainer?.widthTracksTextView = true
+
+        let scrollView = NSScrollView(frame: NSRect(x: 0, y: 0, width: 340, height: 120))
+        scrollView.documentView = textView
+        scrollView.hasVerticalScroller = true
+        scrollView.borderType = .bezelBorder
+
+        alert.accessoryView = scrollView
+        alert.window.initialFirstResponder = textView
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            let corrected = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard corrected != entry.text else { return }
+
+            // Learn the diff
+            let learner = CorrectionLearner()
+            let result = learner.extractCorrections(original: entry.text, corrected: corrected)
+            let (terms, aliases) = learner.applyToVocabulary(result)
+
+            if terms > 0 || aliases > 0 {
+                let msg = [
+                    terms > 0 ? "+\(terms) terms" : nil,
+                    aliases > 0 ? "+\(aliases) aliases" : nil,
+                ].compactMap { $0 }.joined(separator: ", ")
+
+                // Brief confirmation
+                let confirm = NSAlert()
+                confirm.messageText = "Learned: \(msg)"
+                confirm.informativeText = "Corrections added to vocabulary."
+                confirm.alertStyle = .informational
+                confirm.addButton(withTitle: "OK")
+                confirm.runModal()
+            }
+        }
     }
 }
 

@@ -152,9 +152,12 @@ private final class OverlayContentView: NSView {
         switch appState.phase {
         case .recording:
             let seconds = Int(appState.recordingDuration)
-            statusLabel.stringValue = "● \(seconds / 60):\(String(format: "%02d", seconds % 60))"
+            let remaining = Int(90 - appState.recordingDuration)
+            let branchName = AppBranchStore.shared.resolvedName(for: appState.currentBundleID)
+            let branchSuffix = branchName != "Default" ? " (\(branchName))" : ""
+            statusLabel.stringValue = "● \(seconds / 60):\(String(format: "%02d", seconds % 60))\(branchSuffix)"
             statusLabel.textColor = .systemRed
-            textLabel.stringValue = appState.streamingText.isEmpty ? "Listening..." : appState.streamingText
+            textLabel.stringValue = "Recording... \(remaining)s remaining"
             waveformView.levels = appState.audioLevels
             waveformView.isHidden = false
 
@@ -165,7 +168,7 @@ private final class OverlayContentView: NSView {
             waveformView.isHidden = true
 
         case .polishing:
-            statusLabel.stringValue = "⟳ Polishing..."
+            statusLabel.stringValue = "⟳ Organizing..."
             statusLabel.textColor = .systemPurple
             textLabel.stringValue = ""
             waveformView.isHidden = true

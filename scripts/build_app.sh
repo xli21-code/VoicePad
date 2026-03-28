@@ -72,9 +72,13 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-# 7. Ad-hoc codesign
+# 7. Sign with VoicePad Dev certificate (preserves TCC permissions across rebuilds)
 echo "Signing..."
-codesign --force --sign - --deep "$APP"
+# Sign embedded frameworks first, then the app bundle
+for dylib in "$CONTENTS/Frameworks/"*.dylib; do
+    codesign --force --sign "VoicePad Dev" "$dylib"
+done
+codesign --force --sign "VoicePad Dev" "$APP"
 
 echo ""
 echo "=== Done ==="

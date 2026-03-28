@@ -32,5 +32,10 @@ let package = Package(
             ],
             path: "Sources/VoicePad"
         ),
+        .testTarget(
+            name: "VoicePadTests",
+            dependencies: ["VoicePad"],
+            path: "Tests/VoicePadTests"
+        ),
     ]
 )

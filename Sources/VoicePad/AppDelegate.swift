@@ -6,6 +6,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         vpLog("[VoicePad] App launched")
+        ConfigDirectory.ensureExists()
+        VocabularyStore.shared.migrateIfNeeded()
         menuBarController = MenuBarController(appState: appState)
 
         // Check accessibility permission (needed for global hotkey + paste)

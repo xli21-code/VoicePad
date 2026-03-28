@@ -1,61 +1,22 @@
 import AppKit
-import ObjectiveC
 import Observation
 
 /// Manages the NSStatusBar menu bar icon and dropdown menu.
-final class MenuBarController {
+/// Menu rebuilds via NSMenuDelegate on every open for dynamic content.
+final class MenuBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private let appState: AppState
     private var observation: Any?
 
-    private var editKeyMonitor: Any?
-
     init(appState: AppState) {
         self.appState = appState
+        super.init()
         setupStatusItem()
         setupMenu()
         observeState()
     }
 
-    /// Install a local key event monitor so Cmd+C/V/X/A work in modal dialogs.
-    /// LSUIElement apps have no Edit menu, so these shortcuts are dead by default.
-    private func startEditKeyMonitor() {
-        editKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.modifierFlags.contains(.command) else { return event }
-            guard let responder = event.window?.firstResponder else { return event }
-
-            switch event.charactersIgnoringModifiers {
-            case "v":
-                responder.tryToPerform(#selector(NSText.paste(_:)), with: nil)
-                return nil
-            case "c":
-                responder.tryToPerform(#selector(NSText.copy(_:)), with: nil)
-                return nil
-            case "x":
-                responder.tryToPerform(#selector(NSText.cut(_:)), with: nil)
-                return nil
-            case "a":
-                responder.tryToPerform(#selector(NSText.selectAll(_:)), with: nil)
-                return nil
-            case "z":
-                if event.modifierFlags.contains(.shift) {
-                    responder.tryToPerform(Selector(("redo:")), with: nil)
-                } else {
-                    responder.tryToPerform(Selector(("undo:")), with: nil)
-                }
-                return nil
-            default:
-                return event
-            }
-        }
-    }
-
-    private func stopEditKeyMonitor() {
-        if let monitor = editKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            editKeyMonitor = nil
-        }
-    }
+    // MARK: - Status Item
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -85,7 +46,6 @@ final class MenuBarController {
             .withSymbolConfiguration(.init(pointSize: 16, weight: .regular))
         button.image = image
 
-        // Red tint when recording
         if case .recording = phase {
             button.contentTintColor = .systemRed
         } else {
@@ -93,209 +53,200 @@ final class MenuBarController {
         }
     }
 
+    // MARK: - Menu (rebuilt on every open via NSMenuDelegate)
+
     private func setupMenu() {
         let menu = NSMenu()
+        menu.delegate = self
+        statusItem.menu = menu
+    }
 
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
+        // --- Title ---
         menu.addItem(withTitle: "VoicePad", action: nil, keyEquivalent: "").isEnabled = false
 
         menu.addItem(.separator())
 
-        let polishItem = NSMenuItem(
-            title: "Smart Polish (LLM)",
-            action: #selector(togglePolish),
-            keyEquivalent: ""
-        )
+        // --- Daily Toggles ---
+        let polishItem = NSMenuItem(title: "Smart Polish (LLM)", action: #selector(togglePolish), keyEquivalent: "")
         polishItem.target = self
         polishItem.state = appState.polishEnabled ? .on : .off
         menu.addItem(polishItem)
 
-        let translationItem = NSMenuItem(
-            title: "Translation (Coming Soon)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        translationItem.isEnabled = false
+        let translationItem = NSMenuItem(title: "Translation (zh↔en)", action: #selector(toggleTranslation), keyEquivalent: "")
+        translationItem.target = self
+        translationItem.state = appState.translationEnabled ? .on : .off
+        if !appState.polishEnabled && !appState.translationEnabled {
+            translationItem.isEnabled = LLMPolisher().hasAPIKey()
+        }
         menu.addItem(translationItem)
 
-        menu.addItem(.separator())
-
-        let apiKeyItem = NSMenuItem(
-            title: "Set API Key...",
-            action: #selector(setAPIKey),
-            keyEquivalent: ""
-        )
-        apiKeyItem.target = self
-        menu.addItem(apiKeyItem)
+        // --- Context Status ---
+        let branchName = AppBranchStore.shared.resolvedName(for: appState.currentBundleID)
+        let contextItem = NSMenuItem(title: "Context: \(branchName)", action: nil, keyEquivalent: "")
+        contextItem.isEnabled = false
+        menu.addItem(contextItem)
 
         menu.addItem(.separator())
 
-        let historyItem = NSMenuItem(
-            title: "History...",
-            action: #selector(showHistory),
-            keyEquivalent: ""
-        )
+        // --- Config Submenus ---
+        let hotkeyName = HotkeyMonitor.nameForKeyCode(appState.hotkeyKeyCode)
+        let hotkeyItem = NSMenuItem(title: "Hotkey: Double-tap \(hotkeyName)", action: nil, keyEquivalent: "")
+        hotkeyItem.submenu = buildHotkeySubmenu()
+        menu.addItem(hotkeyItem)
+
+        let micName = selectedMicName()
+        let micItem = NSMenuItem(title: "Microphone (\(micName))", action: nil, keyEquivalent: "")
+        micItem.submenu = buildMicSubmenu()
+        menu.addItem(micItem)
+
+        // --- Learn ---
+        let learnItem = NSMenuItem(title: "Learn from Last Correction", action: #selector(learnCorrection), keyEquivalent: "l")
+        learnItem.target = self
+        learnItem.isEnabled = appState.lastPastedText != nil
+        menu.addItem(learnItem)
+
+        menu.addItem(.separator())
+
+        // --- Settings ---
+        let termCount = VocabularyStore.shared.termCount
+        let aliasCount = VocabularyStore.shared.aliasCount
+        var dictTitle = "Dictionary"
+        if termCount > 0 || aliasCount > 0 {
+            dictTitle += " (\(termCount) terms, \(aliasCount) aliases)"
+        }
+        let dictItem = NSMenuItem(title: "\(dictTitle)...", action: #selector(openVocabulary), keyEquivalent: "")
+        dictItem.target = self
+        menu.addItem(dictItem)
+
+        let branchItem = NSMenuItem(title: "App Contexts...", action: #selector(openAppContexts), keyEquivalent: "")
+        branchItem.target = self
+        menu.addItem(branchItem)
+
+        let settingsItem = NSMenuItem(title: "API Settings...", action: #selector(openAPISettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        menu.addItem(.separator())
+
+        // --- History ---
+        let historyItem = NSMenuItem(title: "History...", action: #selector(showHistory), keyEquivalent: "")
         historyItem.target = self
         menu.addItem(historyItem)
 
         menu.addItem(.separator())
 
-        let quitItem = NSMenuItem(
-            title: "Quit VoicePad",
-            action: #selector(NSApplication.terminate(_:)),
-            keyEquivalent: "q"
-        )
+        // --- Quit ---
+        let quitItem = NSMenuItem(title: "Quit VoicePad", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         menu.addItem(quitItem)
-
-        statusItem.menu = menu
     }
+
+    // MARK: - Hotkey Submenu
+
+    private func buildHotkeySubmenu() -> NSMenu {
+        let submenu = NSMenu()
+        for option in HotkeyMonitor.hotkeyOptions {
+            let item = NSMenuItem(title: option.name, action: #selector(selectHotkey(_:)), keyEquivalent: "")
+            item.target = self
+            item.tag = option.keyCode
+            item.state = option.keyCode == appState.hotkeyKeyCode ? .on : .off
+            submenu.addItem(item)
+        }
+        return submenu
+    }
+
+    @objc private func selectHotkey(_ sender: NSMenuItem) {
+        appState.setHotkeyKeyCode(sender.tag)
+    }
+
+    // MARK: - Microphone Submenu
+
+    private func buildMicSubmenu() -> NSMenu {
+        let submenu = NSMenu()
+
+        let autoItem = NSMenuItem(title: "Automatic", action: #selector(selectMic(_:)), keyEquivalent: "")
+        autoItem.target = self
+        autoItem.representedObject = nil as String?
+        autoItem.state = appState.selectedMicID == nil ? .on : .off
+        submenu.addItem(autoItem)
+
+        submenu.addItem(.separator())
+
+        let devices = appState.availableInputDevices()
+        for device in devices {
+            let item = NSMenuItem(title: device.name, action: #selector(selectMic(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = device.id
+            item.state = device.id == appState.selectedMicID ? .on : .off
+            submenu.addItem(item)
+        }
+
+        if devices.isEmpty {
+            let noDeviceItem = NSMenuItem(title: "No external devices", action: nil, keyEquivalent: "")
+            noDeviceItem.isEnabled = false
+            submenu.addItem(noDeviceItem)
+        }
+
+        return submenu
+    }
+
+    @objc private func selectMic(_ sender: NSMenuItem) {
+        let deviceID = sender.representedObject as? String
+        appState.setInputDevice(uniqueID: deviceID)
+    }
+
+    private func selectedMicName() -> String {
+        guard let selectedID = appState.selectedMicID else { return "Automatic" }
+        let devices = appState.availableInputDevices()
+        if let device = devices.first(where: { $0.id == selectedID }) {
+            return device.name
+        }
+        return "Automatic"
+    }
+
+    // MARK: - Toggle Actions
 
     @objc private func togglePolish() {
         appState.polishEnabled.toggle()
-        if let menu = statusItem.menu,
-           let item = menu.items.first(where: { $0.title == "Smart Polish (LLM)" }) {
-            item.state = appState.polishEnabled ? .on : .off
+    }
+
+    @objc private func toggleTranslation() {
+        appState.translationEnabled.toggle()
+    }
+
+    // MARK: - Learn Action
+
+    @objc private func learnCorrection() {
+        Task { @MainActor in
+            appState.learnFromLastCorrection()
         }
     }
 
-    @objc private func setAPIKey() {
-        // Activate the app and start key monitor so Cmd+V works in text fields
-        NSApp.activate(ignoringOtherApps: true)
-        startEditKeyMonitor()
+    // MARK: - Settings Window Actions
 
-        // Load existing config to pre-fill fields
-        let polisher = LLMPolisher()
-        let existingConfig = polisher.loadConfig()
-
-        let alert = NSAlert()
-        alert.messageText = "LLM API Configuration"
-        alert.informativeText = "Configure API for Smart Polish.\nLeave Base URL empty for official Anthropic API."
-        alert.alertStyle = .informational
-        alert.addButton(withTitle: "Save")
-        alert.addButton(withTitle: "Cancel")
-
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 136))
-
-        let keyLabel = NSTextField(labelWithString: "API Key:")
-        keyLabel.frame = NSRect(x: 0, y: 112, width: 80, height: 20)
-        container.addSubview(keyLabel)
-
-        let keyInput = NSTextField(frame: NSRect(x: 85, y: 110, width: 290, height: 24))
-        keyInput.placeholderString = "sk-ant-..."
-        if let key = existingConfig.apiKey, !key.isEmpty {
-            keyInput.stringValue = key
-        }
-        container.addSubview(keyInput)
-
-        let urlLabel = NSTextField(labelWithString: "Base URL:")
-        urlLabel.frame = NSRect(x: 0, y: 78, width: 80, height: 20)
-        container.addSubview(urlLabel)
-
-        let urlInput = NSTextField(frame: NSRect(x: 85, y: 76, width: 290, height: 24))
-        urlInput.placeholderString = "https://api.anthropic.com (default)"
-        if let url = existingConfig.baseURL, !url.isEmpty {
-            urlInput.stringValue = url
-        }
-        container.addSubview(urlInput)
-
-        let modelLabel = NSTextField(labelWithString: "Model:")
-        modelLabel.frame = NSRect(x: 0, y: 44, width: 80, height: 20)
-        container.addSubview(modelLabel)
-
-        let modelInput = NSTextField(frame: NSRect(x: 85, y: 42, width: 290, height: 24))
-        modelInput.placeholderString = "claude-sonnet-4-20250514 (default)"
-        if let model = existingConfig.model, !model.isEmpty {
-            modelInput.stringValue = model
-        }
-        container.addSubview(modelInput)
-
-        // Test button and status label
-        let testButton = NSButton(title: "Test Connection", target: nil, action: nil)
-        testButton.frame = NSRect(x: 85, y: 6, width: 130, height: 28)
-        testButton.bezelStyle = .rounded
-        container.addSubview(testButton)
-
-        let statusLabel = NSTextField(labelWithString: "")
-        statusLabel.frame = NSRect(x: 220, y: 10, width: 155, height: 20)
-        statusLabel.font = .systemFont(ofSize: 12)
-        statusLabel.alignment = .left
-        container.addSubview(statusLabel)
-
-        testButton.target = self
-        testButton.action = #selector(testAPIConnection(_:))
-        // Store references via ObjC associated objects for the action handler
-        objc_setAssociatedObject(testButton, "keyInput", keyInput, .OBJC_ASSOCIATION_RETAIN)
-        objc_setAssociatedObject(testButton, "urlInput", urlInput, .OBJC_ASSOCIATION_RETAIN)
-        objc_setAssociatedObject(testButton, "modelInput", modelInput, .OBJC_ASSOCIATION_RETAIN)
-        objc_setAssociatedObject(testButton, "statusLabel", statusLabel, .OBJC_ASSOCIATION_RETAIN)
-
-        alert.accessoryView = container
-        // Make the key input the first responder so user can type/paste immediately
-        alert.window.initialFirstResponder = keyInput
-
-        let response = alert.runModal()
-        stopEditKeyMonitor()
-
-        if response == .alertFirstButtonReturn {
-            let key = keyInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let url = urlInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let model = modelInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            polisher.saveConfig(
-                apiKey: key.isEmpty ? nil : key,
-                baseURL: url.isEmpty ? nil : url,
-                model: model.isEmpty ? nil : model
-            )
-            vpLog("[MenuBar] API config saved")
-        }
+    @objc private func openVocabulary() {
+        SettingsWindowController.shared.showTab(.vocabulary)
     }
 
-    @objc private func testAPIConnection(_ sender: NSButton) {
-        guard let keyInput = objc_getAssociatedObject(sender, "keyInput") as? NSTextField,
-              let urlInput = objc_getAssociatedObject(sender, "urlInput") as? NSTextField,
-              let modelInput = objc_getAssociatedObject(sender, "modelInput") as? NSTextField,
-              let statusLabel = objc_getAssociatedObject(sender, "statusLabel") as? NSTextField else { return }
-
-        let key = keyInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
-            statusLabel.textColor = .systemOrange
-            statusLabel.stringValue = "Please enter API Key"
-            return
-        }
-
-        let url = urlInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let model = modelInput.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        sender.isEnabled = false
-        statusLabel.textColor = .secondaryLabelColor
-        statusLabel.stringValue = "Testing..."
-
-        Task {
-            let polisher = LLMPolisher()
-            let error = await polisher.testConnection(
-                apiKey: key,
-                baseURL: url.isEmpty ? nil : url,
-                model: model.isEmpty ? nil : model
-            )
-            await MainActor.run {
-                sender.isEnabled = true
-                if let error {
-                    statusLabel.textColor = .systemRed
-                    statusLabel.stringValue = error
-                    statusLabel.toolTip = error
-                } else {
-                    statusLabel.textColor = .systemGreen
-                    statusLabel.stringValue = "Connected!"
-                }
-            }
-        }
+    @objc private func openAppContexts() {
+        SettingsWindowController.shared.showTab(.appContexts)
     }
+
+    @objc private func openAPISettings() {
+        SettingsWindowController.shared.showTab(.api)
+    }
+
+    // MARK: - History
 
     @objc private func showHistory() {
         HistoryPopover.shared.show(relativeTo: statusItem)
     }
 
+    // MARK: - State Observation
+
     private func observeState() {
-        // Use withObservationTracking for @Observable
         func track() {
             withObservationTracking {
                 _ = appState.phase
