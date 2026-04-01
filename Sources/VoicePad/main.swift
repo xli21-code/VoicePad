@@ -19,6 +19,15 @@ func vpLog(_ msg: String) {
 
 vpLog("=== VoicePad Starting ===")
 
+// Prevent multiple instances — activate existing one if already running
+let runningInstances = NSRunningApplication.runningApplications(withBundleIdentifier: "com.voicepad.app")
+    .filter { $0 != NSRunningApplication.current }
+if !runningInstances.isEmpty {
+    vpLog("Another VoicePad instance is already running, activating it and exiting")
+    runningInstances.first?.activate()
+    exit(0)
+}
+
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

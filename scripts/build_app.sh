@@ -70,6 +70,8 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
 </dict>
 </plist>
 PLIST

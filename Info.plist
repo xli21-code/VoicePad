@@ -26,5 +26,7 @@
     <string>VoicePad needs microphone access to record your voice for transcription.</string>
     <key>NSHighResolutionCapable</key>
     <true/>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
 </dict>
 </plist>
