@@ -4,9 +4,10 @@ import SwiftUI
 struct APISettingsView: View {
     @State private var apiKey = ""
     @State private var baseURL = ""
-    @State private var model = ""
+    @State private var model = VoicePadConfig.defaultModel
     @State private var testStatus: TestStatus = .idle
     @State private var testMessage = ""
+    @State private var remoteModels: [String] = []
 
     private enum TestStatus {
         case idle, testing, success, error
@@ -26,8 +27,21 @@ struct APISettingsView: View {
                 }
 
                 LabeledContent("Model") {
-                    TextField("\(VoicePadConfig.defaultModel) (default)", text: $model)
-                        .textFieldStyle(.roundedBorder)
+                    if remoteModels.isEmpty {
+                        Picker("", selection: $model) {
+                            ForEach(VoicePadConfig.availableModels, id: \.id) { m in
+                                Text(m.label).tag(m.id)
+                            }
+                        }
+                        .labelsHidden()
+                    } else {
+                        Picker("", selection: $model) {
+                            ForEach(remoteModels, id: \.self) { m in
+                                Text(m).tag(m)
+                            }
+                        }
+                        .labelsHidden()
+                    }
                 }
             } header: {
                 Text("LLM API Configuration")
@@ -79,18 +93,17 @@ struct APISettingsView: View {
         let config = LLMPolisher().loadConfig()
         apiKey = config.apiKey ?? ""
         baseURL = config.baseURL == VoicePadConfig.defaultBaseURL ? "" : config.baseURL
-        model = config.model == VoicePadConfig.defaultModel ? "" : config.model
+        model = config.model
     }
 
     private func saveConfig() {
         let polisher = LLMPolisher()
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         let url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mdl = model.trimmingCharacters(in: .whitespacesAndNewlines)
         polisher.saveConfig(
             apiKey: key.isEmpty ? nil : key,
             baseURL: url.isEmpty ? nil : url,
-            model: mdl.isEmpty ? nil : mdl
+            model: model
         )
         vpLog("[APISettings] Config saved")
     }
@@ -105,21 +118,40 @@ struct APISettingsView: View {
 
         testStatus = .testing
         let url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mdl = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        let polisher = LLMPolisher()
 
         Task {
-            let error = await LLMPolisher().testConnection(
+            // Fetch models and test connection in parallel
+            async let modelsTask = polisher.fetchModels(
+                apiKey: key,
+                baseURL: url.isEmpty ? nil : url
+            )
+            async let testTask = polisher.testConnection(
                 apiKey: key,
                 baseURL: url.isEmpty ? nil : url,
-                model: mdl.isEmpty ? nil : mdl
+                model: model
             )
+
+            let fetchedModels = await modelsTask
+            let error = await testTask
+
             await MainActor.run {
+                // Update remote models list
+                if let models = fetchedModels, !models.isEmpty {
+                    remoteModels = models
+                    // Auto-select the first model if current model is not in the list
+                    if !models.contains(model), let first = models.first {
+                        model = first
+                        vpLog("[APISettings] Auto-selected model: \(first)")
+                    }
+                }
+
                 if let error {
                     testStatus = .error
                     testMessage = error
                 } else {
                     testStatus = .success
-                    testMessage = ""
+                    testMessage = remoteModels.isEmpty ? "" : "\(remoteModels.count) models available"
                 }
             }
         }

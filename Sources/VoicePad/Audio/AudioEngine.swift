@@ -15,11 +15,19 @@ final class AudioEngine {
     private var isRecording = false
     private var onChunk: (([Float], Float) -> Void)?
     private var chunkCount = 0
-    private(set) var engineRunning = false
+    private(set) var engineRunning = false {
+        didSet { lastEngineStartAttempt = nil }
+    }
     private(set) var isSleeping = false
 
     // CoreAudio device-change listener
     private var deviceChangeListenerInstalled = false
+
+    // Retry state for failed prepare attempts
+    private var retryWorkItem: DispatchWorkItem?
+    private var retryCount = 0
+    private let maxRetries = 5
+    private var lastEngineStartAttempt: Date?
 
     // Pre-roll ring buffer: keeps last 1.5s of converted 16kHz mono samples
     private let preRollLock = NSLock()
@@ -215,13 +223,58 @@ final class AudioEngine {
         }
     }
 
+    /// Check if the engine is actually alive (not just our flag).
+    /// macOS can silently kill audio IO after inactivity.
+    var isActuallyRunning: Bool {
+        guard let engine else { return false }
+        return engine.isRunning
+    }
+
+    /// Sync our flag with the real engine state. Returns true if engine is alive.
+    @discardableResult
+    func syncEngineState() -> Bool {
+        if engineRunning && !isActuallyRunning {
+            vpLog("[AudioEngine] Engine died silently — resetting state")
+            engineRunning = false
+        }
+        return engineRunning
+    }
+
+    /// Cancel any pending retry
+    private func cancelRetry() {
+        retryWorkItem?.cancel()
+        retryWorkItem = nil
+    }
+
+    /// Schedule a delayed prepare retry with backoff
+    private func scheduleRetry() {
+        guard retryCount < maxRetries else {
+            vpLog("[AudioEngine] Exhausted \(maxRetries) retries — giving up until next device change or user action")
+            retryCount = 0
+            return
+        }
+        let delay = Double(min(1 << retryCount, 8)) // 1, 2, 4, 8, 8 seconds
+        retryCount += 1
+        vpLog("[AudioEngine] Scheduling retry #\(retryCount) in \(delay)s")
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.engineRunning else { return }
+            vpLog("[AudioEngine] Retry #\(self.retryCount) — calling prepare()")
+            self.prepare()
+        }
+        retryWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
     /// Start the audio engine and install a permanent tap.
     /// Call once at app startup. The engine stays running in the background.
     func prepare() {
+        cancelRetry()
         installDeviceChangeListener()
 
         guard hasInputDevice() else {
             vpLog("[AudioEngine] No input device available — skipping engine setup")
+            scheduleRetry()
             return
         }
 
@@ -325,6 +378,7 @@ final class AudioEngine {
         do {
             try eng.start()
             engineRunning = true
+            retryCount = 0
             vpLog("[AudioEngine] engine started (always-on mode)")
         } catch {
             vpLog("[AudioEngine] FAILED to start engine: \(error)")
@@ -332,6 +386,7 @@ final class AudioEngine {
             eng.stop()
             engine = nil
             engineRunning = false
+            scheduleRetry()
         }
     }
 
@@ -381,6 +436,7 @@ final class AudioEngine {
     /// Put the engine to sleep — stops the audio engine and releases resources.
     /// Call `wake()` or `prepare()` to restart.
     func sleep() {
+        cancelRetry()
         guard engineRunning else { return }
         vpLog("[AudioEngine] going to sleep — stopping engine to save resources")
         engine?.inputNode.removeTap(onBus: 0)
@@ -424,10 +480,22 @@ final class AudioEngine {
         ) { [weak self] _, _ in
             guard let self else { return }
             vpLog("[AudioEngine] Default input device changed")
+
+            // Sync our flag with reality — macOS may have killed the engine silently
+            self.syncEngineState()
+
             if !self.engineRunning && !self.isRecording {
                 vpLog("[AudioEngine] Attempting auto-prepare after device change")
                 self.isSleeping = false
-                self.prepare()
+                self.retryCount = 0 // reset retries on new device event
+                // Delay slightly to let CoreAudio settle after device change
+                self.cancelRetry()
+                let work = DispatchWorkItem { [weak self] in
+                    guard let self, !self.engineRunning else { return }
+                    self.prepare()
+                }
+                self.retryWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
             }
         }
 

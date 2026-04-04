@@ -13,6 +13,7 @@ import AppKit
 final class HotkeyMonitor {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
+    var onLongPress: (() -> Void)?
 
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
@@ -30,6 +31,8 @@ final class HotkeyMonitor {
 
     private let doubleTapInterval: TimeInterval = 0.4   // max gap between two taps
     private let maxTapDuration: TimeInterval = 0.35      // max hold duration to count as a "tap"
+    private let longPressDuration: TimeInterval = 0.6    // min hold for long-press correction
+    private var longPressTimer: Timer?
 
     /// The keyCode of the configured hotkey modifier.
     var hotkeyKeyCode: Int {
@@ -88,6 +91,8 @@ final class HotkeyMonitor {
     }
 
     func stop() {
+        longPressTimer?.invalidate()
+        longPressTimer = nil
         if let monitor = globalFlagsMonitor {
             NSEvent.removeMonitor(monitor)
             globalFlagsMonitor = nil
@@ -119,12 +124,30 @@ final class HotkeyMonitor {
             isKeyDown = true
             otherKeyPressed = false
             currentKeyDownTime = Date()
+            longPressTimer?.invalidate()
+
+            // Start long-press timer (only when not recording)
+            if !isRecordingActive {
+                longPressTimer = Timer.scheduledTimer(withTimeInterval: longPressDuration, repeats: false) { [weak self] _ in
+                    guard let self, self.isKeyDown, !self.otherKeyPressed else { return }
+                    vpLog("[HotkeyMonitor] Long press detected → CORRECTION")
+                    self.longPressTimer = nil
+                    // Mark as consumed so key-up won't trigger a tap
+                    self.currentKeyDownTime = nil
+                    self.onLongPress?()
+                }
+            }
         } else if !modifierDown && isKeyDown {
             // Key released
             isKeyDown = false
+            longPressTimer?.invalidate()
+            longPressTimer = nil
+
+            // If long press already consumed this press, skip
+            guard let keyDownTime = currentKeyDownTime else { return }
 
             // Check if this was a quick tap (not a long hold)
-            let holdDuration = currentKeyDownTime.map { Date().timeIntervalSince($0) } ?? 1.0
+            let holdDuration = Date().timeIntervalSince(keyDownTime)
 
             // If chord detected or held too long, not a tap — ignore
             if otherKeyPressed {

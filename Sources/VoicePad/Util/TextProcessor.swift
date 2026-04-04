@@ -34,16 +34,29 @@ struct TextProcessor {
     }
 
     private func removeSenseVoiceTags(_ text: String) -> String {
-        // Remove tags like <|SPEECH|>, <|EMO_HAPPY|>, <|Event_BGM|>, etc.
         var result = text
-        let pattern = #"<\|[A-Z_]+\|>"#
-        if let regex = try? NSRegularExpression(pattern: pattern) {
+
+        // Remove tags like <|SPEECH|>, <|EMO_HAPPY|>, <|Event_BGM|>, <|NR|>, etc.
+        let tagPattern = #"<\|[A-Za-z_]+\|>"#
+        if let regex = try? NSRegularExpression(pattern: tagPattern) {
             result = regex.stringByReplacingMatches(
                 in: result,
                 range: NSRange(result.startIndex..., in: result),
                 withTemplate: ""
             )
         }
+
+        // Remove standalone noise markers that SenseVoice may output as plain text
+        // (NR = noise/non-recognizable, [NR], (NR), etc.)
+        let noisePattern = #"[\[\(（]?\b(?:NR|NOISE|BLANK)\b[\]\)）]?"#
+        if let regex = try? NSRegularExpression(pattern: noisePattern, options: .caseInsensitive) {
+            result = regex.stringByReplacingMatches(
+                in: result,
+                range: NSRange(result.startIndex..., in: result),
+                withTemplate: ""
+            )
+        }
+
         return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

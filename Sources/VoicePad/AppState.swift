@@ -42,6 +42,7 @@ final class AppState {
     private let maxRecordingDuration: TimeInterval = 90
     private var idleTimer: Timer?
     private let sleepAfterIdleDuration: TimeInterval = 30 * 60 // 30 minutes
+    private var idleResetTask: Task<Void, Never>?
 
     /// The last text VoicePad pasted, used for correction learning.
     private(set) var lastPastedText: String?
@@ -164,6 +165,11 @@ final class AppState {
         hotkeyMonitor.onKeyUp = { [weak self] in
             Task { @MainActor in
                 self?.stopRecordingAndTranscribe()
+            }
+        }
+        hotkeyMonitor.onLongPress = { [weak self] in
+            Task { @MainActor in
+                self?.showCorrectionPanel()
             }
         }
         hotkeyMonitor.start()
@@ -444,6 +450,89 @@ final class AppState {
         correctionLearner.applyToVocabulary(result)
     }
 
+    // MARK: - Long-Press Correction
+
+    /// Show editable panel with last transcription for correction.
+    @MainActor
+    private func showCorrectionPanel() {
+        // Phase gate: only allow correction when idle or done
+        switch phase {
+        case .idle, .done, .error:
+            break
+        default:
+            vpLog("[AppState] Correction blocked — phase is \(phase)")
+            return
+        }
+
+        guard let original = lastPastedText, !original.isEmpty else {
+            vpLog("[AppState] No last paste to correct")
+            phase = .error("No recent transcription to correct")
+            updateOverlay()
+            scheduleIdleReset(after: 2)
+            return
+        }
+
+        // Remember which app to paste back to
+        let targetApp = previousApp
+
+        vpLog("[AppState] Showing correction panel for: '\(original.prefix(50))'")
+
+        CorrectionPanel.shared.show(text: original, confirm: { [weak self] corrected in
+            guard let self else { return }
+            Task { @MainActor in
+                self.applyCorrection(original: original, corrected: corrected, targetApp: targetApp)
+            }
+        }, cancel: {
+            vpLog("[AppState] Correction cancelled")
+        })
+    }
+
+    /// Apply user's correction: try AX replace + always copy to clipboard as backup.
+    @MainActor
+    private func applyCorrection(original: String, corrected: String, targetApp: NSRunningApplication?) {
+        guard original != corrected else {
+            vpLog("[AppState] Text unchanged, nothing to do")
+            return
+        }
+
+        vpLog("[AppState] Applying correction: '\(original.prefix(30))' → '\(corrected.prefix(30))'")
+
+        // Always put corrected text in clipboard (backup for apps where AX fails)
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(corrected, forType: .string)
+
+        // Try AX replace in target app (works in native macOS apps like WeChat, Notes, etc.)
+        textInserter.replaceOriginal(original, with: corrected, in: targetApp) { [weak self] in
+            guard let self else { return }
+
+            self.lastPastedText = corrected
+            self.lastPasteTime = Date()
+
+            // Learn aliases
+            let result = self.correctionLearner.extractCorrections(original: original, corrected: corrected)
+            if !result.newAliases.isEmpty {
+                AliasConfirmPanel.shared.show(aliases: result.newAliases) { [weak self] approved in
+                    guard let self, !approved.isEmpty else {
+                        vpLog("[AppState] No aliases approved")
+                        return
+                    }
+                    let filtered = CorrectionLearner.LearnResult(newAliases: approved, newTerms: [])
+                    let (_, aliases) = self.correctionLearner.applyToVocabulary(filtered)
+                    if aliases > 0 {
+                        vpLog("[AppState] Correction learned: +\(aliases) aliases")
+                        NSSound(named: "Glass")?.play()
+                        self.learnResult = "+\(aliases) aliases"
+                    }
+                }
+            }
+
+            self.phase = .done("Corrected (also in clipboard)")
+            self.updateOverlay()
+            self.scheduleIdleReset(after: 3)
+        }
+    }
+
     // MARK: - Sleep / Wake
 
     private func resetIdleTimer() {
@@ -457,6 +546,9 @@ final class AppState {
 
     /// Wake the AudioEngine if it's sleeping or not yet started. Returns true if ready.
     private func wakeIfNeeded() -> Bool {
+        // Always check real engine state — macOS can silently kill audio IO
+        audioEngine.syncEngineState()
+
         if audioEngine.isSleeping {
             vpLog("[AppState] Waking AudioEngine from sleep")
             return audioEngine.wake()
@@ -471,8 +563,11 @@ final class AppState {
     // MARK: - Helpers
 
     private func scheduleIdleReset(after seconds: TimeInterval) {
-        Task { @MainActor in
+        // Cancel any previous idle reset to avoid race
+        idleResetTask?.cancel()
+        idleResetTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
             if case .idle = phase { return }
             phase = .idle
             streamingText = ""

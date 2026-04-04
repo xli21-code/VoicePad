@@ -56,47 +56,35 @@ struct CorrectionLearner {
     // MARK: - Diff & Learn
 
     /// Compare original (what VoicePad pasted) with corrected (what user changed it to).
-    /// Extracts word-level diffs as potential aliases and terms.
+    /// Only extracts word-level replacements as aliases — nothing else.
     func extractCorrections(original: String, corrected: String) -> LearnResult {
-        // Tokenize both strings into words, preserving order
         let originalWords = tokenize(original)
         let correctedWords = tokenize(corrected)
-
-        // Use simple LCS-based diff to find changed segments
         let diffs = computeWordDiffs(from: originalWords, to: correctedWords)
 
         var newAliases: [Alias] = []
-        var newTerms: [String] = []
 
         for diff in diffs {
             switch diff {
             case .replacement(let from, let to):
-                // User replaced one word/phrase with another → alias candidate
-                let fromText = from.joined(separator: " ")
-                let toText = to.joined(separator: " ")
+                let fromText = joinTokens(from)
+                let toText = joinTokens(to)
                 guard !fromText.isEmpty, !toText.isEmpty else { continue }
 
-                // Skip if it's just capitalization of the same word
-                if fromText.lowercased() == toText.lowercased() {
-                    // Pure capitalization fix → add as term (correct casing)
-                    newTerms.append(toText)
-                } else {
-                    newAliases.append(Alias(from: fromText, to: toText))
-                    // Also add the correct form as a term
-                    newTerms.append(toText)
-                }
+                // Skip if identical ignoring case (pure capitalization — not worth an alias)
+                if fromText.lowercased() == toText.lowercased() { continue }
 
-            case .insertion(let words):
-                // User added words — not a correction, skip
-                _ = words
+                // Skip overly long replacements (> 8 tokens) — likely structural edits
+                if from.count > 8 || to.count > 8 { continue }
 
-            case .deletion:
-                // User deleted words — not useful for vocabulary
+                newAliases.append(Alias(from: fromText, to: toText))
+
+            case .insertion, .deletion:
                 break
             }
         }
 
-        return LearnResult(newAliases: newAliases, newTerms: newTerms)
+        return LearnResult(newAliases: newAliases, newTerms: [])
     }
 
     /// Apply learned corrections to the vocabulary store.
@@ -137,23 +125,55 @@ struct CorrectionLearner {
     // MARK: - Tokenizer
 
     private func tokenize(_ text: String) -> [String] {
-        // Split on whitespace and punctuation boundaries, keeping words
-        var words: [String] = []
-        var current = ""
+        // Split on whitespace for Latin text, and split CJK characters individually
+        // so that a single Chinese character change doesn't produce a whole-sentence alias.
+        var tokens: [String] = []
+        var latinBuffer = ""
+
         for char in text {
             if char.isWhitespace {
-                if !current.isEmpty {
-                    words.append(current)
-                    current = ""
+                if !latinBuffer.isEmpty {
+                    tokens.append(latinBuffer)
+                    latinBuffer = ""
                 }
+            } else if isCJK(char) {
+                // Flush any Latin buffer first
+                if !latinBuffer.isEmpty {
+                    tokens.append(latinBuffer)
+                    latinBuffer = ""
+                }
+                // Each CJK character is its own token
+                tokens.append(String(char))
             } else {
-                current.append(char)
+                latinBuffer.append(char)
             }
         }
-        if !current.isEmpty {
-            words.append(current)
+        if !latinBuffer.isEmpty {
+            tokens.append(latinBuffer)
         }
-        return words
+        return tokens
+    }
+
+    /// Check if a character is CJK (Chinese/Japanese/Korean).
+    private func isCJK(_ char: Character) -> Bool {
+        guard let scalar = char.unicodeScalars.first else { return false }
+        let v = scalar.value
+        // CJK Unified Ideographs + Extension A/B + Compatibility
+        return (v >= 0x4E00 && v <= 0x9FFF)
+            || (v >= 0x3400 && v <= 0x4DBF)
+            || (v >= 0x20000 && v <= 0x2A6DF)
+            || (v >= 0xF900 && v <= 0xFAFF)
+            // CJK punctuation
+            || (v >= 0x3000 && v <= 0x303F)
+            // Fullwidth forms
+            || (v >= 0xFF00 && v <= 0xFFEF)
+    }
+
+    /// Join tokens back into text, using no separator for CJK-only sequences.
+    private func joinTokens(_ tokens: [String]) -> String {
+        // If all tokens are single CJK characters, join without spaces
+        let allCJK = tokens.allSatisfy { $0.count == 1 && $0.first.map(isCJK) == true }
+        return tokens.joined(separator: allCJK ? "" : " ")
     }
 
     // MARK: - Word-level Diff

@@ -20,6 +20,14 @@ struct VocabularySettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                HStack {
+                    TextField("Add term...", text: $newTerm)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addTerm() }
+                    Button("Add") { addTerm() }
+                        .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+
                 List {
                     ForEach(Array(vocabulary.terms.enumerated()), id: \.offset) { index, term in
                         Text(term)
@@ -36,14 +44,6 @@ struct VocabularySettingsView: View {
                     }
                 }
                 .listStyle(.bordered)
-
-                HStack {
-                    TextField("New term...", text: $newTerm)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addTerm() }
-                    Button("Add") { addTerm() }
-                        .disabled(newTerm.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
             }
             .padding()
             .frame(minWidth: 250)
@@ -55,6 +55,21 @@ struct VocabularySettingsView: View {
                 Text("Deterministic corrections: wrong → right.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+
+                HStack(spacing: 4) {
+                    TextField("Wrong", text: $newAliasFrom)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(maxWidth: 120)
+                    Image(systemName: "arrow.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                    TextField("Right", text: $newAliasTo)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit { addAlias() }
+                    Button("Add") { addAlias() }
+                        .disabled(newAliasFrom.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || newAliasTo.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
 
                 List {
                     ForEach(Array(vocabulary.aliases.enumerated()), id: \.element.id) { index, alias in
@@ -79,21 +94,6 @@ struct VocabularySettingsView: View {
                     }
                 }
                 .listStyle(.bordered)
-
-                HStack(spacing: 4) {
-                    TextField("Wrong", text: $newAliasFrom)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 120)
-                    Image(systemName: "arrow.right")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                    TextField("Right", text: $newAliasTo)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addAlias() }
-                    Button("Add") { addAlias() }
-                        .disabled(newAliasFrom.trimmingCharacters(in: .whitespaces).isEmpty
-                                  || newAliasTo.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
             }
             .padding()
             .frame(minWidth: 250)

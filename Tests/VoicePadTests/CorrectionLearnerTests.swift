@@ -18,14 +18,15 @@ struct CorrectionLearnerTests {
         #expect(result.newAliases.first?.to == "Claude")
     }
 
-    @Test("Detects capitalization change as term")
+    @Test("Capitalization-only change is skipped")
     func capitalizationChange() {
         let result = learner.extractCorrections(
             original: "I use openai daily",
             corrected: "I use OpenAI daily"
         )
-        // Capitalization-only → term, not alias
-        #expect(result.newTerms.contains("OpenAI"))
+        // Capitalization-only → skipped entirely (no alias, no term)
+        #expect(result.newAliases.isEmpty)
+        #expect(result.newTerms.isEmpty)
     }
 
     @Test("No changes → empty result")
