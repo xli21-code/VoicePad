@@ -19,6 +19,15 @@ struct VoicePadConfig {
     ]
 }
 
+/// A saved API connection profile.
+struct APIProfile: Codable, Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    let apiKey: String
+    let baseURL: String
+    let model: String
+}
+
 /// Calls Claude API to restructure raw transcribed speech into clean, structured text.
 /// Supports dictionary injection, App Branch context, and self-correction detection.
 final class LLMPolisher {
@@ -78,87 +87,127 @@ final class LLMPolisher {
         loadConfig().apiKey != nil
     }
 
+    // MARK: - Profiles
+
+    func loadProfiles() -> [APIProfile] {
+        guard let data = FileManager.default.contents(atPath: configPath),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let arr = json["profiles"] as? [[String: String]] else { return [] }
+        return arr.compactMap { dict in
+            guard let name = dict["name"], let key = dict["api_key"],
+                  let url = dict["base_url"], let model = dict["model"] else { return nil }
+            return APIProfile(name: name, apiKey: key, baseURL: url, model: model)
+        }
+    }
+
+    func saveProfile(_ profile: APIProfile) {
+        var json: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: configPath),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json = existing
+        }
+        var profiles = (json["profiles"] as? [[String: String]]) ?? []
+        let dict: [String: String] = [
+            "name": profile.name, "api_key": profile.apiKey,
+            "base_url": profile.baseURL, "model": profile.model
+        ]
+        // Replace existing with same name, or append
+        if let idx = profiles.firstIndex(where: { $0["name"] == profile.name }) {
+            profiles[idx] = dict
+        } else {
+            profiles.append(dict)
+        }
+        json["profiles"] = profiles
+        if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
+            ConfigDirectory.ensureExists()
+            FileManager.default.createFile(atPath: configPath, contents: data)
+        }
+    }
+
+    func deleteProfile(named name: String) {
+        var json: [String: Any] = [:]
+        if let data = FileManager.default.contents(atPath: configPath),
+           let existing = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json = existing
+        }
+        var profiles = (json["profiles"] as? [[String: String]]) ?? []
+        profiles.removeAll { $0["name"] == name }
+        json["profiles"] = profiles
+        if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
+            FileManager.default.createFile(atPath: configPath, contents: data)
+        }
+    }
+
+    /// Try a POST request, first with /v1/messages, fallback to /messages on 403/404.
+    private func tryRequest(base: String, path: String, apiKey: String, method: String = "POST",
+                            body: [String: Any]? = nil, timeout: TimeInterval = 15) async -> (Data, HTTPURLResponse)? {
+        let session = makeSession()
+        for prefix in ["/v1", ""] {
+            let endpoint = "\(base)\(prefix)\(path)"
+            guard let url = URL(string: endpoint) else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            request.timeoutInterval = timeout
+            if let body {
+                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            }
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if http.statusCode == 403 || http.statusCode == 404 {
+                    vpLog("[LLMPolisher] \(endpoint) returned \(http.statusCode), trying fallback")
+                    continue
+                }
+                return (data, http)
+            } catch {
+                vpLog("[LLMPolisher] \(endpoint) error: \(error), trying fallback")
+                continue
+            }
+        }
+        return nil
+    }
+
     /// Test API connectivity with a minimal request. Returns nil on success, or error message.
     func testConnection(apiKey: String, baseURL: String?, model: String?) async -> String? {
         let base = (baseURL?.isEmpty ?? true) ? VoicePadConfig.defaultBaseURL : baseURL!
         let finalBase = base.hasSuffix("/") ? String(base.dropLast()) : base
         let mdl = (model?.isEmpty ?? true) ? VoicePadConfig.defaultModel : model!
-        let endpoint = "\(finalBase)/v1/messages"
-
-        guard let url = URL(string: endpoint) else {
-            return "Invalid URL: \(endpoint)"
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.timeoutInterval = 15
 
         let body: [String: Any] = [
-            "model": mdl,
-            "max_tokens": 1,
+            "model": mdl, "max_tokens": 1,
             "messages": [["role": "user", "content": "hi"]]
         ]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        let session = makeSession()
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse else {
-                return "Invalid response"
-            }
-            if http.statusCode == 200 {
-                return nil // success
-            }
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let err = json["error"] as? [String: Any],
-               let msg = err["message"] as? String {
-                return "HTTP \(http.statusCode): \(msg)"
-            }
-            let body = String(data: data, encoding: .utf8) ?? ""
-            return "HTTP \(http.statusCode): \(body.prefix(200))"
-        } catch {
-            return error.localizedDescription
+        guard let (data, http) = await tryRequest(base: finalBase, path: "/messages", apiKey: apiKey, body: body) else {
+            return "Connection failed"
         }
+        if http.statusCode == 200 { return nil }
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let err = json["error"] as? [String: Any],
+           let msg = err["message"] as? String {
+            return "HTTP \(http.statusCode): \(msg)"
+        }
+        let respBody = String(data: data, encoding: .utf8) ?? ""
+        return "HTTP \(http.statusCode): \(respBody.prefix(200))"
     }
 
-    /// Fetch available models from the API server (GET /v1/models).
-    /// Returns a list of model IDs, or nil if the endpoint is not available.
+    /// Fetch available models from the API server. Tries /v1/models then /models.
     func fetchModels(apiKey: String, baseURL: String?) async -> [String]? {
         let base = (baseURL?.isEmpty ?? true) ? VoicePadConfig.defaultBaseURL : baseURL!
         let finalBase = base.hasSuffix("/") ? String(base.dropLast()) : base
-        let endpoint = "\(finalBase)/v1/models"
 
-        guard let url = URL(string: endpoint) else { return nil }
+        guard let (data, http) = await tryRequest(base: finalBase, path: "/models", apiKey: apiKey,
+                                                   method: "GET", timeout: 10) else { return nil }
+        guard http.statusCode == 200 else { return nil }
 
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.timeoutInterval = 10
-
-        let session = makeSession()
-
-        do {
-            let (data, response) = try await session.data(for: request)
-            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
-
-            // Anthropic format: {"data": [{"id": "model-id", ...}, ...]}
-            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let models = json["data"] as? [[String: Any]] {
-                return models.compactMap { $0["id"] as? String }.sorted()
-            }
-
-            // OpenAI-compatible format: {"data": [{"id": "model-id"}, ...]}
-            // Same structure, already handled above
-            return nil
-        } catch {
-            vpLog("[LLMPolisher] fetchModels error: \(error)")
-            return nil
+        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let models = json["data"] as? [[String: Any]] {
+            return models.compactMap { $0["id"] as? String }.sorted()
         }
+        return nil
     }
 
     // MARK: - Generic API Call
@@ -272,18 +321,8 @@ final class LLMPolisher {
     // MARK: - Claude API
 
     private func callClaude(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
-        let endpoint = "\(config.baseURL)/v1/messages"
-        vpLog("[LLMPolisher] calling \(endpoint) with model=\(config.model)")
-
-        guard let url = URL(string: endpoint) else {
-            throw PolishError.invalidResponse
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.timeoutInterval = 30
+        let finalBase = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
+        vpLog("[LLMPolisher] calling \(finalBase)/[v1/]messages with model=\(config.model)")
 
         let messageContent = userText ?? prompt ?? ""
         var body: [String: Any] = [
@@ -297,19 +336,16 @@ final class LLMPolisher {
         if let systemPrompt {
             body["system"] = systemPrompt
         }
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let session = makeSession()
-        let (data, response) = try await session.data(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse else {
+        guard let (data, httpResponse) = await tryRequest(base: finalBase, path: "/messages", apiKey: apiKey,
+                                                           body: body, timeout: 30) else {
             throw PolishError.invalidResponse
         }
 
         guard httpResponse.statusCode == 200 else {
-            let body = String(data: data, encoding: .utf8) ?? ""
-            vpLog("[LLMPolisher] API error \(httpResponse.statusCode): \(body.prefix(200))")
-            throw PolishError.apiError(httpResponse.statusCode, body)
+            let respBody = String(data: data, encoding: .utf8) ?? ""
+            vpLog("[LLMPolisher] API error \(httpResponse.statusCode): \(respBody.prefix(200))")
+            throw PolishError.apiError(httpResponse.statusCode, respBody)
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
