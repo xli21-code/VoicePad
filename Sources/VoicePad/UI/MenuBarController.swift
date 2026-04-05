@@ -241,6 +241,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     // MARK: - History
 
     @objc private func showHistory() {
+        HistoryPopover.shared.historyStore = appState.historyStore
         HistoryPopover.shared.show(relativeTo: statusItem)
     }
 

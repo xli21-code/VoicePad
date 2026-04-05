@@ -15,9 +15,7 @@ final class AudioEngine {
     private var isRecording = false
     private var onChunk: (([Float], Float) -> Void)?
     private var chunkCount = 0
-    private(set) var engineRunning = false {
-        didSet { lastEngineStartAttempt = nil }
-    }
+    private(set) var engineRunning = false
     private(set) var isSleeping = false
 
     // CoreAudio device-change listener
@@ -27,7 +25,6 @@ final class AudioEngine {
     private var retryWorkItem: DispatchWorkItem?
     private var retryCount = 0
     private let maxRetries = 5
-    private var lastEngineStartAttempt: Date?
 
     // Pre-roll ring buffer: keeps last 1.5s of converted 16kHz mono samples
     private let preRollLock = NSLock()
@@ -121,11 +118,17 @@ final class AudioEngine {
         UserDefaults.standard.string(forKey: "selectedMicID")
     }
 
-    /// Apply the stored device selection to the audio engine.
-    private func applyDeviceSelection(uniqueID: String?) {
-        guard let uniqueID else { return }
+    /// The AudioDeviceID to use for the next engine prepare, or nil for system default.
+    private var pendingDeviceID: AudioDeviceID?
 
-        // Find the AudioDeviceID for this uniqueID
+    /// Apply the stored device selection — resolves uniqueID to AudioDeviceID
+    /// without touching the system-wide default input device.
+    private func applyDeviceSelection(uniqueID: String?) {
+        guard let uniqueID else {
+            pendingDeviceID = nil
+            return
+        }
+
         var propertyAddress = AudioObjectPropertyAddress(
             mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -149,25 +152,13 @@ final class AudioEngine {
             AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &uid)
 
             if uid as String == uniqueID {
-                // Set this device as the default input for our audio unit
-                var mutableDeviceID = deviceID
-                var inputAddress = AudioObjectPropertyAddress(
-                    mSelector: kAudioHardwarePropertyDefaultInputDevice,
-                    mScope: kAudioObjectPropertyScopeGlobal,
-                    mElement: kAudioObjectPropertyElementMain
-                )
-                AudioObjectSetPropertyData(
-                    AudioObjectID(kAudioObjectSystemObject),
-                    &inputAddress,
-                    0, nil,
-                    UInt32(MemoryLayout<AudioDeviceID>.size),
-                    &mutableDeviceID
-                )
+                pendingDeviceID = deviceID
                 vpLog("[AudioEngine] Set input device to \(uniqueID) (deviceID=\(deviceID))")
                 return
             }
         }
         vpLog("[AudioEngine] Device \(uniqueID) not found — using system default")
+        pendingDeviceID = nil
     }
 
     /// Check if a real audio input device is available.
@@ -287,7 +278,7 @@ final class AudioEngine {
             engineRunning = false
         }
 
-        // Apply stored mic selection before creating engine
+        // Resolve stored mic selection to AudioDeviceID
         if let storedMic = selectedMicID {
             applyDeviceSelection(uniqueID: storedMic)
         }
@@ -295,6 +286,22 @@ final class AudioEngine {
         let eng = AVAudioEngine()
         self.engine = eng
         let inputNode = eng.inputNode
+
+        // Set per-engine input device (doesn't change system-wide default)
+        if let deviceID = pendingDeviceID {
+            var devID = deviceID
+            let status = AudioUnitSetProperty(
+                inputNode.audioUnit!,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &devID,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+            if status != noErr {
+                vpLog("[AudioEngine] Failed to set input device on audio unit: \(status)")
+            }
+        }
         let inputFormat = inputNode.outputFormat(forBus: 0)
         vpLog("[AudioEngine] prepare: sampleRate=\(inputFormat.sampleRate), channels=\(inputFormat.channelCount)")
 

@@ -5,16 +5,17 @@ final class HistoryPopover {
     static let shared = HistoryPopover()
 
     private var popover: NSPopover?
-    private let historyStore = HistoryStore()
+    var historyStore: HistoryStore?
 
     private init() {}
 
     func show(relativeTo statusItem: NSStatusItem) {
+        guard let store = historyStore else { return }
         if popover == nil {
             let p = NSPopover()
             p.contentSize = NSSize(width: 360, height: 480)
             p.behavior = .transient
-            p.contentViewController = HistoryViewController(historyStore: historyStore)
+            p.contentViewController = HistoryViewController(historyStore: store)
             popover = p
         }
 

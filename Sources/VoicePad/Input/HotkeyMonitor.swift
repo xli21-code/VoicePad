@@ -185,10 +185,6 @@ final class HotkeyMonitor {
         }
     }
 
-    /// Whether this was a chord (modifier + other key). Used by AppState to decide
-    /// whether to discard the recording.
-    var wasChord: Bool { false } // Chords are now handled internally — never passed to AppState
-
     /// Determine if the modifier key for the given keyCode is currently pressed.
     private func isModifierDown(event: NSEvent, keyCode: Int) -> Bool {
         let flags = event.modifierFlags

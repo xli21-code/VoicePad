@@ -87,13 +87,4 @@ final class SherpaRecognizer {
         return TranscriptResult(text: text, language: lang)
     }
 
-    // MARK: - Streaming (pseudo-streaming, SenseVoice is offline-only)
-
-    /// Feed audio samples for streaming partial results.
-    /// Returns the current partial text, or nil if no update.
-    func feedSamples(_ samples: [Float]) -> String? {
-        // SenseVoice is offline-only — true streaming requires a transducer model.
-        // For now, return nil (no partial results).
-        return nil
-    }
 }

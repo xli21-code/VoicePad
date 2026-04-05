@@ -28,10 +28,17 @@ struct APIProfile: Codable, Identifiable, Equatable {
     let model: String
 }
 
-/// Calls Claude API to restructure raw transcribed speech into clean, structured text.
+/// Calls Claude API or OpenAI-compatible API to restructure raw transcribed speech into clean, structured text.
 /// Supports dictionary injection, App Branch context, and self-correction detection.
 final class LLMPolisher {
     private let configPath = ConfigDirectory.path + "/config.json"
+
+    /// Returns true if the model should use OpenAI-compatible API format.
+    private func isOpenAIModel(_ model: String) -> Bool {
+        let lower = model.lowercased()
+        // Claude models use Anthropic format, everything else uses OpenAI format
+        return !lower.hasPrefix("claude")
+    }
 
     // MARK: - Config (consolidated)
 
@@ -176,22 +183,41 @@ final class LLMPolisher {
         let finalBase = base.hasSuffix("/") ? String(base.dropLast()) : base
         let mdl = (model?.isEmpty ?? true) ? VoicePadConfig.defaultModel : model!
 
-        let body: [String: Any] = [
-            "model": mdl, "max_tokens": 1,
-            "messages": [["role": "user", "content": "hi"]]
-        ]
-
-        guard let (data, http) = await tryRequest(base: finalBase, path: "/messages", apiKey: apiKey, body: body) else {
-            return "Connection failed"
+        if isOpenAIModel(mdl) {
+            // OpenAI-compatible test
+            let body: [String: Any] = [
+                "model": mdl, "max_tokens": 1,
+                "messages": [["role": "user", "content": "hi"]]
+            ]
+            guard let (data, http) = await tryRequestOpenAI(base: finalBase, path: "/chat/completions", apiKey: apiKey, body: body) else {
+                return "Connection failed"
+            }
+            if http.statusCode == 200 { return nil }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let msg = err["message"] as? String {
+                return "HTTP \(http.statusCode): \(msg)"
+            }
+            let respBody = String(data: data, encoding: .utf8) ?? ""
+            return "HTTP \(http.statusCode): \(respBody.prefix(200))"
+        } else {
+            // Anthropic test
+            let body: [String: Any] = [
+                "model": mdl, "max_tokens": 1,
+                "messages": [["role": "user", "content": "hi"]]
+            ]
+            guard let (data, http) = await tryRequest(base: finalBase, path: "/messages", apiKey: apiKey, body: body) else {
+                return "Connection failed"
+            }
+            if http.statusCode == 200 { return nil }
+            if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let err = json["error"] as? [String: Any],
+               let msg = err["message"] as? String {
+                return "HTTP \(http.statusCode): \(msg)"
+            }
+            let respBody = String(data: data, encoding: .utf8) ?? ""
+            return "HTTP \(http.statusCode): \(respBody.prefix(200))"
         }
-        if http.statusCode == 200 { return nil }
-        if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let err = json["error"] as? [String: Any],
-           let msg = err["message"] as? String {
-            return "HTTP \(http.statusCode): \(msg)"
-        }
-        let respBody = String(data: data, encoding: .utf8) ?? ""
-        return "HTTP \(http.statusCode): \(respBody.prefix(200))"
     }
 
     /// Fetch available models from the API server. Tries /v1/models then /models.
@@ -219,7 +245,7 @@ final class LLMPolisher {
         guard let apiKey = config.apiKey else {
             throw PolishError.apiError(0, "No API key configured")
         }
-        return try await callClaude(config: config, apiKey: apiKey, prompt: prompt, maxTokens: maxTokens)
+        return try await callLLM(config: config, apiKey: apiKey, prompt: prompt, maxTokens: maxTokens)
     }
 
     // MARK: - Polish
@@ -236,7 +262,7 @@ final class LLMPolisher {
         let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms, appBranchPrompt: appBranchPrompt)
 
         do {
-            let result = try await callClaude(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
+            let result = try await callLLM(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
             vpLog("[LLMPolisher] polished: '\(result.prefix(80))'")
             return result
         } catch {
@@ -268,7 +294,7 @@ final class LLMPolisher {
         """
 
         do {
-            let result = try await callClaude(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
+            let result = try await callLLM(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
             vpLog("[LLMPolisher] translated: '\(result.prefix(80))'")
             return result
         } catch {
@@ -318,11 +344,19 @@ final class LLMPolisher {
         return parts.joined(separator: "\n\n")
     }
 
-    // MARK: - Claude API
+    // MARK: - LLM API (Anthropic + OpenAI compatible)
+
+    private func callLLM(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+        if isOpenAIModel(config.model) {
+            return try await callOpenAI(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
+        } else {
+            return try await callClaude(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
+        }
+    }
 
     private func callClaude(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
         let finalBase = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
-        vpLog("[LLMPolisher] calling \(finalBase)/[v1/]messages with model=\(config.model)")
+        vpLog("[LLMPolisher] calling Anthropic API: \(finalBase)/[v1/]messages with model=\(config.model)")
 
         let messageContent = userText ?? prompt ?? ""
         var body: [String: Any] = [
@@ -356,6 +390,78 @@ final class LLMPolisher {
         }
 
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func callOpenAI(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+        let finalBase = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
+        vpLog("[LLMPolisher] calling OpenAI-compatible API: \(finalBase)/v1/chat/completions with model=\(config.model)")
+
+        let messageContent = userText ?? prompt ?? ""
+        var messages: [[String: String]] = []
+        if let systemPrompt {
+            messages.append(["role": "system", "content": systemPrompt])
+        }
+        messages.append(["role": "user", "content": messageContent])
+
+        let body: [String: Any] = [
+            "model": config.model,
+            "max_tokens": maxTokens,
+            "temperature": 0.3,
+            "messages": messages
+        ]
+
+        guard let (data, httpResponse) = await tryRequestOpenAI(base: finalBase, path: "/chat/completions", apiKey: apiKey,
+                                                                  body: body, timeout: 30) else {
+            throw PolishError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let respBody = String(data: data, encoding: .utf8) ?? ""
+            vpLog("[LLMPolisher] OpenAI API error \(httpResponse.statusCode): \(respBody.prefix(200))")
+            throw PolishError.apiError(httpResponse.statusCode, respBody)
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = json["choices"] as? [[String: Any]],
+              let firstChoice = choices.first,
+              let message = firstChoice["message"] as? [String: Any],
+              let text = message["content"] as? String else {
+            vpLog("[LLMPolisher] OpenAI parse error, data: \(String(data: data, encoding: .utf8)?.prefix(300) ?? "nil")")
+            throw PolishError.parseError
+        }
+
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// OpenAI-compatible request: tries /v1 prefix then bare path.
+    private func tryRequestOpenAI(base: String, path: String, apiKey: String, method: String = "POST",
+                                   body: [String: Any]? = nil, timeout: TimeInterval = 15) async -> (Data, HTTPURLResponse)? {
+        let session = makeSession()
+        for prefix in ["/v1", ""] {
+            let endpoint = "\(base)\(prefix)\(path)"
+            guard let url = URL(string: endpoint) else { continue }
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            request.timeoutInterval = timeout
+            if let body {
+                request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            }
+            do {
+                let (data, response) = try await session.data(for: request)
+                guard let http = response as? HTTPURLResponse else { continue }
+                if http.statusCode == 403 || http.statusCode == 404 {
+                    vpLog("[LLMPolisher] \(endpoint) returned \(http.statusCode), trying fallback")
+                    continue
+                }
+                return (data, http)
+            } catch {
+                vpLog("[LLMPolisher] \(endpoint) error: \(error), trying fallback")
+                continue
+            }
+        }
+        return nil
     }
 
     // MARK: - Network

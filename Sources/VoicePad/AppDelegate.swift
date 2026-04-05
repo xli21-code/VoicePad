@@ -18,6 +18,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             AXIsProcessTrustedWithOptions(options)
         }
 
+        // Request Automation permission for System Events (needed for AppleScript paste fallback)
+        requestAutomationPermission()
+
+        // Pre-warm Accessibility check — if user just granted permission after prompt,
+        // CGEvent paste will work immediately on next recording
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            let retrust = AXIsProcessTrusted()
+            vpLog("[VoicePad] Accessibility re-check: \(retrust)")
+        }
+
         // Request microphone permission
         Task {
             await appState.requestMicPermission()
@@ -28,6 +38,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task {
             await appState.ensureASRModel()
             vpLog("[VoicePad] ASR model ready: \(appState.phase)")
+        }
+    }
+
+    /// Trigger a harmless Apple Event to System Events so macOS prompts for Automation permission.
+    /// Without this, VoicePad won't appear in System Settings → Privacy → Automation.
+    private func requestAutomationPermission() {
+        DispatchQueue.global(qos: .utility).async {
+            let script = NSAppleScript(source: """
+                tell application "System Events" to return name of first process
+            """)
+            var error: NSDictionary?
+            script?.executeAndReturnError(&error)
+            if let error {
+                vpLog("[VoicePad] Automation permission request: \(error[NSAppleScript.errorBriefMessage] ?? "denied")")
+            } else {
+                vpLog("[VoicePad] Automation permission granted for System Events")
+            }
         }
     }
 }

@@ -62,23 +62,6 @@ struct ImportEngine {
         return ExportBundle(vocabulary: vocabulary, branches: branches)
     }
 
-    /// Import from an ExportBundle, merging with existing data.
-    func importBundle(_ data: Data) throws {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        let bundle = try decoder.decode(ExportBundle.self, from: data)
-
-        // Merge vocabulary
-        var vocab = VocabularyStore.shared.load()
-        vocab.terms.append(contentsOf: bundle.vocabulary.terms)
-        vocab.terms = Array(Set(vocab.terms))
-        vocab.aliases.append(contentsOf: bundle.vocabulary.aliases)
-        VocabularyStore.shared.save(vocab)
-
-        // Replace branches (import overwrites)
-        AppBranchStore.shared.saveBranches(bundle.branches)
-    }
-
     // MARK: - Helpers
 
     /// Extract JSON object from LLM response that might include markdown fencing.

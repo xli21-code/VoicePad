@@ -28,19 +28,22 @@ mkdir -p "$CONTENTS/Resources"
 # 3. Copy binary
 cp "$BINARY" "$CONTENTS/MacOS/VoicePad"
 
-# 4. Copy frameworks (sherpa-onnx dylibs)
+# 4. Copy frameworks (sherpa-onnx dylibs) — use symlink to avoid duplicating onnxruntime (~33MB)
 SHERPA_LIB="$PROJECT_DIR/Frameworks/sherpa-onnx/lib"
 cp "$SHERPA_LIB/libsherpa-onnx-c-api.dylib" "$CONTENTS/Frameworks/"
-cp "$SHERPA_LIB/libonnxruntime.dylib" "$CONTENTS/Frameworks/"
-# Also copy the versioned dylib if it exists (the symlink target)
-if [ -f "$SHERPA_LIB/libonnxruntime.1.23.2.dylib" ]; then
-    cp "$SHERPA_LIB/libonnxruntime.1.23.2.dylib" "$CONTENTS/Frameworks/"
-fi
+cp "$SHERPA_LIB/libonnxruntime.1.23.2.dylib" "$CONTENTS/Frameworks/"
+ln -sf "libonnxruntime.1.23.2.dylib" "$CONTENTS/Frameworks/libonnxruntime.dylib"
 
-# 5. Fix rpath references — binary should find dylibs in Frameworks/
+# 5. Strip debug symbols to reduce binary size
+echo "Stripping symbols..."
+strip -x "$CONTENTS/MacOS/VoicePad"
+strip -x "$CONTENTS/Frameworks/libsherpa-onnx-c-api.dylib"
+strip -x "$CONTENTS/Frameworks/libonnxruntime.1.23.2.dylib"
+
+# 6. Fix rpath references — binary should find dylibs in Frameworks/
 install_name_tool -add_rpath "@executable_path/../Frameworks" "$CONTENTS/MacOS/VoicePad" 2>/dev/null || true
 
-# 6. Write Info.plist
+# 7. Write Info.plist
 cat > "$CONTENTS/Info.plist" << 'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -76,15 +79,16 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
-# 7. Copy app icon
+# 8. Copy app icon
 if [ -f "$PROJECT_DIR/Resources/AppIcon.icns" ]; then
     cp "$PROJECT_DIR/Resources/AppIcon.icns" "$CONTENTS/Resources/"
 fi
 
-# 8. Sign with VoicePad Dev certificate (preserves TCC permissions across rebuilds)
+# 9. Sign with VoicePad Dev certificate (preserves TCC permissions across rebuilds)
 echo "Signing..."
-# Sign embedded frameworks first, then the app bundle
+# Sign embedded frameworks first (skip symlinks), then the app bundle
 for dylib in "$CONTENTS/Frameworks/"*.dylib; do
+    [ -L "$dylib" ] && continue
     codesign --force --sign "VoicePad Dev" "$dylib"
 done
 codesign --force --sign "VoicePad Dev" "$APP"

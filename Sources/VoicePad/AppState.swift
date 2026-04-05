@@ -16,7 +16,6 @@ enum AppPhase: Equatable {
 @Observable
 final class AppState {
     var phase: AppPhase = .idle
-    var streamingText: String = ""
     var recordingDuration: TimeInterval = 0
     var translationEnabled: Bool {
         didSet { UserDefaults.standard.set(translationEnabled, forKey: "translationEnabled") }
@@ -33,7 +32,7 @@ final class AppState {
     private let hotkeyMonitor = HotkeyMonitor()
     private let textInserter = TextInserter()
     private let modelManager = ModelManager()
-    private let historyStore = HistoryStore()
+    let historyStore = HistoryStore()
     private let textProcessor = TextProcessor()
     private let llmPolisher = LLMPolisher()
     private let correctionLearner = CorrectionLearner()
@@ -205,7 +204,6 @@ final class AppState {
         // Remember which app the user is typing in
         previousApp = NSWorkspace.shared.frontmostApplication
 
-        streamingText = ""
         recordingDuration = 0
         audioLevels = []
         polishFailed = false
@@ -444,12 +442,6 @@ final class AppState {
         scheduleIdleReset(after: 2)
     }
 
-    /// Learn from a history edit: compare original transcript with user's corrected version.
-    func learnFromHistoryEdit(original: String, corrected: String) {
-        let result = correctionLearner.extractCorrections(original: original, corrected: corrected)
-        correctionLearner.applyToVocabulary(result)
-    }
-
     // MARK: - Long-Press Correction
 
     /// Show editable panel with last transcription for correction.
@@ -570,7 +562,6 @@ final class AppState {
             guard !Task.isCancelled else { return }
             if case .idle = phase { return }
             phase = .idle
-            streamingText = ""
             updateOverlay()
         }
     }

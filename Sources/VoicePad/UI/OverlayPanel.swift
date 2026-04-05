@@ -74,7 +74,6 @@ final class OverlayPanel {
         func track() {
             withObservationTracking {
                 _ = appState.phase
-                _ = appState.streamingText
                 _ = appState.recordingDuration
                 _ = appState.audioLevels
             } onChange: { [weak self] in
