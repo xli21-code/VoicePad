@@ -311,6 +311,12 @@ final class AppState {
 
         var processedText = textProcessor.process(result.text)
 
+        // Captured for the raw/polished training-pair log (see TrainingPairLogger).
+        // rawASR stays the untouched SenseVoice output; polishedForLog is set only
+        // when polish actually ran and succeeded.
+        let rawASRForLog = result.text
+        var polishedForLog: String?
+
         // LLM polish if enabled
         if polishEnabled {
             await MainActor.run {
@@ -331,6 +337,7 @@ final class AppState {
                 dictionaryTerms: dictionaryTerms,
                 appBranchPrompt: branchPrompt
             ) {
+                polishedForLog = polished
                 processedText = polished
                 // Apply post-LLM corrections (catch LLM alterations)
                 processedText = textProcessor.applyPostCorrections(processedText)
@@ -355,10 +362,11 @@ final class AppState {
         }
 
         // Save to history
+        let audioDurationS = Double(samples.count) / 16000.0
         let entry = TranscriptEntry(
             text: processedText,
             language: result.language,
-            duration: Double(samples.count) / 16000.0
+            duration: audioDurationS
         )
         historyStore.append(entry)
 
@@ -370,6 +378,14 @@ final class AppState {
             textInserter.paste(processedText, to: previousApp)
             lastPastedText = processedText
             lastPasteTime = Date()
+
+            // Best-effort training-data pair log — never allowed to affect the paste flow.
+            TrainingPairLogger.log(
+                rawASR: rawASRForLog,
+                polished: polishedForLog,
+                targetApp: previousApp?.bundleIdentifier,
+                audioDurationS: audioDurationS
+            )
         }
 
         scheduleIdleReset(after: 1.5)
