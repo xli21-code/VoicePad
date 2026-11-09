@@ -439,9 +439,12 @@ final class LLMPolisher {
 
     /// Trimmed output must be non-empty and at least 30% of the input length,
     /// otherwise a reasoning model likely burned the token budget and returned nothing.
-    static func isUsableOutput(_ output: String, for input: String) -> Bool {
+    /// `checkLength` is false for prompt→answer calls (vocabulary import), where the answer is
+    /// legitimately much shorter than the prompt and only emptiness signals a burnt budget.
+    static func isUsableOutput(_ output: String, for input: String, checkLength: Bool = true) -> Bool {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        guard checkLength else { return true }
         let inputCount = input.trimmingCharacters(in: .whitespacesAndNewlines).count
         guard inputCount > 0 else { return true }
         return trimmed.count * 10 >= inputCount * 3
@@ -449,11 +452,13 @@ final class LLMPolisher {
 
     private func callLLM(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
         let input = userText ?? prompt ?? ""
+        // Prompt→answer calls must not be judged by output/input length ratio.
+        let checkLength = userText != nil
         var tokens = maxTokens
 
         for attempt in 1...2 {
             let result = try await callAPI(config: config, apiKey: apiKey, model: model, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: tokens)
-            if Self.isUsableOutput(result, for: input) {
+            if Self.isUsableOutput(result, for: input, checkLength: checkLength) {
                 return result
             }
             vpLog("[LLMPolisher] unusable output (attempt \(attempt), max_tokens=\(tokens)): '\(result.prefix(80))'")

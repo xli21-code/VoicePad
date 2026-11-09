@@ -112,6 +112,16 @@ struct LLMPolisherTests {
         #expect(!LLMPolisher.isUsableOutput(tooShort, for: input))
     }
 
+    @Test("Prompt→answer calls are not judged by length ratio")
+    func promptAnswerNotRatioJudged() {
+        // Vocabulary import: a long prompt legitimately produces a short answer.
+        let prompt = String(repeating: "instruction ", count: 200)
+        #expect(LLMPolisher.isUsableOutput("[]", for: prompt, checkLength: false))
+        #expect(!LLMPolisher.isUsableOutput("", for: prompt, checkLength: false))
+        // The same answer would be rejected when it is a rewrite of short input.
+        #expect(!LLMPolisher.isUsableOutput("[]", for: "这句话需要整理", checkLength: true))
+    }
+
     @Test("Normal rewrite is accepted")
     func normalRewriteAccepted() {
         let input = "um so this is the thing that I actually wanted to say about the API gateway"
