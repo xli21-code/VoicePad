@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VoicePad → Typeless 级 迭代计划</title>
+<style>
+  :root{
+    --bg:#faf8f5; --card:#ffffff; --line:#e9e5dd; --line-soft:#f1eee8;
+    --ink:#1f1d1a; --ink-2:#4a463f; --muted:#8b857b;
+    --accent:#c96442; --accent-soft:#f6e7e0;
+    --done:#3f7d5c; --done-soft:#e6f0e9;
+    --doing:#c96442; --doing-soft:#fbeade;
+    --blocked:#a83a32; --blocked-soft:#f8e3e0;
+    --user:#5b62b8; --user-soft:#e8e9f7;
+    --planned:#b5aea2; --planned-soft:#f2efe9;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:15px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Helvetica Neue",Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1180px;margin:0 auto;padding:40px 28px 72px}
+  header.page{margin-bottom:28px}
+  .eyebrow{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  h1{font-size:30px;line-height:1.25;margin:10px 0 8px;font-weight:650;letter-spacing:-.01em}
+  .sub{color:var(--ink-2);max-width:760px;margin:0}
+  .meta{display:flex;flex-wrap:wrap;gap:8px;margin-top:16px}
+  .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--ink-2)}
+  .chip b{font-weight:600;color:var(--ink)}
+  .chip.warn{border-color:#e6cfc9;background:#fdf3f0;color:var(--blocked)}
+
+  .progress-card{
+    margin-top:22px;background:var(--card);border:1px solid var(--line);border-radius:var(--radius);
+    padding:18px 20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;
+  }
+  .progress-main{flex:1 1 320px;min-width:260px}
+  .progress-label{display:flex;justify-content:space-between;font-size:13px;color:var(--muted);margin-bottom:8px}
+  .progress-label b{color:var(--ink);font-size:14px}
+  .track{height:10px;border-radius:999px;background:var(--line-soft);overflow:hidden}
+  .fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#d98a63,#c96442)}
+  .mini-stats{display:flex;gap:22px;flex-wrap:wrap}
+  .mini{font-size:12px;color:var(--muted);text-align:center;min-width:52px}
+  .mini span{display:block;font-size:19px;font-weight:650;color:var(--ink)}
+
+  h2{font-size:16px;font-weight:650;margin:34px 0 12px;letter-spacing:.01em}
+  h2 small{font-weight:400;color:var(--muted);font-size:12.5px;margin-left:8px;letter-spacing:0}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius)}
+
+  /* ── gantt ── */
+  .gantt{overflow:hidden}
+  .gantt-scroll{overflow-x:auto}
+  .gw{min-width:980px}
+  .row{display:grid;grid-template-columns:250px 1fr;border-top:1px solid var(--line-soft)}
+  .row:first-child{border-top:none}
+  .cell-label{padding:11px 14px 11px 16px;font-size:13.5px;display:flex;gap:9px;align-items:flex-start}
+  .cell-label .tid{font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--muted);min-width:34px;padding-top:2px}
+  .cell-label .tt{color:var(--ink)}
+  .cell-label .tnote{display:block;font-size:11.5px;color:var(--muted);margin-top:2px}
+  .track-area{position:relative}
+  .phase-row{background:#fcfbf9}
+  .phase-row .cell-label{font-weight:650;font-size:13px;align-items:center}
+  .phase-row .cell-label .tid{min-width:auto;color:var(--accent);font-weight:600}
+  .phase-bar{position:absolute;top:50%;transform:translateY(-50%);height:9px;border-radius:999px;background:var(--planned-soft)}
+  .phase-bar .pf{height:100%;border-radius:999px;background:var(--done);opacity:.55}
+  .ticks{display:grid;position:relative}
+  .tick-head{border-bottom:1px solid var(--line);background:#fdfcfa}
+  .tick-label{font-size:11px;color:var(--muted);padding:22px 0 6px 6px;border-left:1px solid var(--line-soft)}
+  .tick-label.weekend{background:#faf7f2}
+  .tick-label.month-start{color:var(--ink-2);font-weight:600;border-left:1px solid var(--line)}
+  .dayline{position:absolute;top:0;bottom:0;width:1px;background:var(--line-soft);pointer-events:none}
+  .today{position:absolute;top:0;bottom:0;width:2px;background:var(--accent);opacity:.55;pointer-events:none;z-index:3}
+  .today-flag{position:absolute;top:-1px;font-size:10px;color:#fff;background:var(--accent);padding:2px 6px;border-radius:0 0 5px 0;transform:translateX(-1px);z-index:4;letter-spacing:.04em}
+
+  .bar{position:absolute;top:50%;transform:translateY(-50%);height:22px;border-radius:7px;display:flex;align-items:center;
+       padding:0 8px;font-size:11px;color:#fff;white-space:nowrap;overflow:hidden;box-shadow:0 1px 0 rgba(0,0,0,.04)}
+  .bar.done{background:var(--done)}
+  .bar.doing{background:var(--doing)}
+  .bar.blocked{background:repeating-linear-gradient(135deg,#a83a32,#a83a32 6px,#c2564d 6px,#c2564d 12px)}
+  .bar.planned{background:#d9d3c8;color:#5f594f}
+  .bar.user{background:var(--user)}
+  .ms{position:absolute;top:50%;transform:translate(-50%,-50%) rotate(45deg);width:11px;height:11px;background:var(--card);
+      border:2px solid var(--accent);border-radius:2px;z-index:2}
+  .ms-label{position:absolute;top:50%;transform:translateY(-50%);font-size:10.5px;color:var(--accent);font-weight:600;white-space:nowrap}
+
+  /* ── lists ── */
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:880px){.grid2{grid-template-columns:1fr}}
+  .list{padding:6px 0}
+  .item{padding:13px 18px;border-top:1px solid var(--line-soft);display:flex;gap:12px;align-items:flex-start}
+  .item:first-child{border-top:none}
+  .dot{width:8px;height:8px;border-radius:50%;margin-top:7px;flex:0 0 8px}
+  .dot.red{background:var(--blocked)} .dot.blue{background:var(--user)} .dot.grey{background:var(--planned)}
+  .item .body{flex:1}
+  .item b{font-weight:600;font-size:13.5px}
+  .item p{margin:2px 0 0;font-size:12.5px;color:var(--muted)}
+  .tag{font-size:10.5px;padding:2px 7px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap;margin-top:2px}
+
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);text-align:left;font-weight:600;
+     padding:12px 16px;border-bottom:1px solid var(--line);background:#fdfcfa}
+  td{padding:11px 16px;border-bottom:1px solid var(--line-soft);vertical-align:top;color:var(--ink-2)}
+  td code,.mono{font:12px ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--ink);background:var(--line-soft);
+     padding:1px 5px;border-radius:4px}
+  tr:last-child td{border-bottom:none}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:10px 2px 0}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+  footer{margin-top:34px;font-size:12px;color:var(--muted);line-height:1.8}
+  footer code{font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--line-soft);padding:1px 5px;border-radius:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="page">
+    <div class="eyebrow">VoicePad · 迭代计划</div>
+    <h1>从「本地批处理」到 Typeless 级语音输入</h1>
+    <p class="sub">质量优先路线：模型统一走 Magpie 网关（0 元本地主力 + 按需升档），录音永不因敏感而外泄（策略在发送前决定），ASR 换成「流式预览 + 停顿定稿 + 长句重解码」两段式，落字改 AX 直写。Typeless 实测 0.9–1.1s，我们以「松手 ≤1.2s 定稿、说话时可见字」为验收线。</p>
+    <div class="meta">
+      <span class="chip">周期 <b>11-09 → 12-06</b></span>
+      <span class="chip">分支 <b>6 条</b></span>
+      <span class="chip">里程碑 <b>6 个</b></span>
+      <span class="chip warn">需你处理 <b id="chip-user">0</b> 项</span>
+      <span class="chip">卡点 <b id="chip-block">0</b> 项</span>
+    </div>
+
+    <div class="progress-card">
+      <div class="progress-main">
+        <div class="progress-label"><span>总体进度（按任务加权，进行中计 0.5）</span><b id="pct">0%</b></div>
+        <div class="track"><div class="fill" id="fill" style="width:0%"></div></div>
+      </div>
+      <div class="mini-stats">
+        <div class="mini"><span id="s-done">0</span>已完成</div>
+        <div class="mini"><span id="s-doing">0</span>进行中</div>
+        <div class="mini"><span id="s-planned">0</span>未开始</div>
+        <div class="mini"><span id="s-blocked">0</span>受阻</div>
+      </div>
+    </div>
+  </header>
+
+  <h2>甘特图 <small>条长 = 预估工作量；◇ = 里程碑；竖线 = 今天</small></h2>
+  <div class="card gantt">
+    <div class="gantt-scroll"><div class="gw" id="gw"></div></div>
+  </div>
+  <div class="legend">
+    <span><i style="background:var(--done)"></i>已完成</span>
+    <span><i style="background:var(--doing)"></i>进行中</span>
+    <span><i style="background:#d9d3c8"></i>未开始</span>
+    <span><i style="background:repeating-linear-gradient(135deg,#a83a32,#a83a32 4px,#c2564d 4px,#c2564d 8px)"></i>受阻</span>
+    <span><i style="background:var(--user)"></i>需要你</span>
+  </div>
+
+  <h2>卡点 <small>不解决就会卡住后续阶段</small></h2>
+  <div class="grid2">
+    <div class="card list" id="blockers"></div>
+    <div class="card list" id="user-actions"></div>
+  </div>
+
+  <h2>分支与合并 <small>短命分支，一次只让一个分支持有 AppState</small></h2>
+  <div class="card" style="overflow:hidden">
+    <table id="branches"></table>
+  </div>
+
+  <h2>合并纪律</h2>
+  <div class="card list">
+    <div class="item"><span class="dot grey"></span><div class="body"><b>AppState.swift 是热文件</b><p>P2/P3/P4 都要改它，直接在原文件上并行必冲突。P1 结束前先抽出 <span class="mono">DictationPipeline</span>（录音→ASR→改写→落字 的协议化管线），之后每个阶段只实现自己的协议。</p></div></div>
+    <div class="item"><span class="dot grey"></span><div class="body"><b>合入门槛 = 基线不退化</b><p>每个分支合并前跑一次 <span class="mono">bench</span>：CER（对照集）、端到端 p50/p90、单次成本。任何一项退化超过 5% 不合。</p></div></div>
+    <div class="item"><span class="dot grey"></span><div class="body"><b>分支存活 ≤ 5 天</b><p>超时就把剩余工作拆成新分支，避免长期分支与主线脱节。</p></div></div>
+  </div>
+
+  <footer>
+    <div id="updated"></div>
+    <div>更新方式：编辑本文件顶部 <code>PLAN</code> 里的 <code>status</code>（<code>done | doing | planned | blocked | user</code>），进度条、阶段条、里程碑、统计会自动重算；改完把 <code>PLAN.updated</code> 一起改掉。</div>
+  </footer>
+</div>
+
+<script>
+/* ───────────────────────── 唯一数据源 ───────────────────────── */
+const PLAN = {
+  updated: "2026-11-09 22:40",
+  range: { start: "2026-11-09", end: "2026-12-06" },
+  today: "2026-11-09",
+  phases: [
+    { id: "P0", name: "评测底座", branch: "chore/eval-harness" },
+    { id: "P1", name: "模型网关", branch: "feat/model-gateway" },
+    { id: "P2", name: "上下文改写", branch: "feat/context-rewrite" },
+    { id: "P3", name: "流式两段式", branch: "feat/streaming-asr" },
+    { id: "P4", name: "落字", branch: "feat/insertion" },
+    { id: "P5", name: "学习闭环", branch: "feat/learning-loop" },
+  ],
+  tasks: [
+    { id: "T0", phase: "P0", title: "提交既有纠错改动", note: "CJK 展开 + 填充词 + 24 tests", start: "2026-11-09", end: "2026-11-09", status: "done" },
+    { id: "T1", phase: "P0", title: "录音归档（audio 与 history 关联）", note: "评测的前提，只落本机", start: "2026-11-09", end: "2026-11-10", status: "doing" },
+    { id: "T2", phase: "P0", title: "对照集 30–50 条", note: "中英混说 / 术语 / 自我纠正 / 长句", start: "2026-11-09", end: "2026-11-13", status: "user" },
+    { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "多引擎一键横向", start: "2026-11-10", end: "2026-11-12", status: "planned" },
+    { id: "M0", phase: "P0", milestone: true, title: "评测可跑", start: "2026-11-13", end: "2026-11-13" },
+
+    { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "润色/翻译/终稿；reasoning off", start: "2026-11-09", end: "2026-11-10", status: "doing" },
+    { id: "T5", phase: "P1", title: "/v1/models 全量 picker", note: "Magpie 60 模型，按能力/价格过滤", start: "2026-11-10", end: "2026-11-11", status: "planned" },
+    { id: "T6", phase: "P1", title: "空输出判失败 + 双候选竞速", note: "thinking 吃满 max_tokens 会静默返回空", start: "2026-11-10", end: "2026-11-11", status: "planned" },
+    { id: "T7", phase: "P1", title: "隐私路由：敏感 app → 本地", note: "在发送前决定，不是事后补救", start: "2026-11-11", end: "2026-11-12", status: "blocked", blocker: "B5" },
+    { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-12", end: "2026-11-12" },
+
+    { id: "T8", phase: "P2", title: "AX 读取层", note: "role / 选区 / 光标前后 800 字 / 可见文本，超时兜底", start: "2026-11-12", end: "2026-11-14", status: "planned" },
+    { id: "T9", phase: "P2", title: "读前黑名单", note: "黑名单在 AX 调用之前判断", start: "2026-11-14", end: "2026-11-15", status: "blocked", blocker: "B5" },
+    { id: "T10", phase: "P2", title: "prompt v2", note: "上下文分区 / 语音编辑意图 / 英文术语保形", start: "2026-11-13", end: "2026-11-16", status: "planned" },
+    { id: "T11", phase: "P2", title: "输出守护", note: "禁答题 + 长度比例检查，防改写跑偏", start: "2026-11-16", end: "2026-11-17", status: "planned" },
+    { id: "M2", phase: "P2", milestone: true, title: "上下文改写上线", start: "2026-11-17", end: "2026-11-17" },
+
+    { id: "T12", phase: "P3", title: "引擎抽象 + Apple SpeechTranscriber", note: "macOS 26 原生流式，中文/粤语", start: "2026-11-17", end: "2026-11-19", status: "planned" },
+    { id: "T13", phase: "P3", title: "Qwen3-ASR 0.6B（CoreML）", note: "全离线主力候选", start: "2026-11-19", end: "2026-11-21", status: "planned" },
+    { id: "T14", phase: "P3", title: "VAD 分段 + 停顿定稿", note: "稳定前缀只增不改，尾部可改", start: "2026-11-20", end: "2026-11-22", status: "planned" },
+    { id: "T15", phase: "P3", title: "预览浮窗", note: "说话时可见字，灰色为未定稿", start: "2026-11-21", end: "2026-11-24", status: "planned" },
+    { id: "T16", phase: "P3", title: "长句终稿重解码", note: "60s 口述不再一次性硬喂", start: "2026-11-24", end: "2026-11-25", status: "planned" },
+    { id: "M3", phase: "P3", milestone: true, title: "边说边出字", start: "2026-11-25", end: "2026-11-25" },
+
+    { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-25", end: "2026-11-27", status: "planned" },
+    { id: "T18", phase: "P4", title: "预览期增量替换", note: "定稿段替换灰字，不重粘全文", start: "2026-11-26", end: "2026-11-28", status: "planned" },
+    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-28", end: "2026-11-28", status: "planned" },
+    { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-28", end: "2026-11-28" },
+
+    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "词表直进化器，不只塞 prompt", start: "2026-11-29", end: "2026-11-30", status: "planned" },
+    { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "同一句在 Slack / 代码 产出不同格式", start: "2026-11-30", end: "2026-12-04", status: "planned" },
+    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-12-04", end: "2026-12-06", status: "planned" },
+    { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-12-06", end: "2026-12-06" },
+  ],
+  blockers: [
+    { id: "B1", title: "Magpie 能否注册 audio/STT provider", desc: "端点 /v1/audio/transcriptions 已存在但无 audio 模型。能注册 → ASR 也进网关；不能 → ASR 全本地，网关只管改写。", owner: "你 + 我", tag: "待定", level: "red" },
+    { id: "B2", title: "对照集还没录", desc: "没有 30–50 条带音频的原始 ASR / 定稿对照组，CER 无从比较，换引擎只是靠感觉。", owner: "你", tag: "阻塞 T3", level: "red" },
+    { id: "B3", title: "Apple Speech 中英混说表现未知", desc: "它支持中文/粤语，但「大量英文术语夹在中文句子里」是否把术语转成汉字，只有对照集能回答。", owner: "我", tag: "待验证", level: "grey" },
+    { id: "B4", title: "SenseVoice 当前加载的是 937MB 浮点模型", desc: "盘上同时有 model.onnx 与 model.int8.onnx，代码取前者。内存与解码时延可能白付 4 倍。", owner: "我", tag: "小", level: "grey" },
+    { id: "B5", title: "敏感 app 名单未定", desc: "没有名单，隐私路由和「读前黑名单」都没法实现。参考 Typeless 默认：微信 / Excel / WPS / Sublime / Google Docs。", owner: "你", tag: "阻塞 T7 T9", level: "red" },
+    { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。先抽 DictationPipeline，否则每条分支合并都要手工解冲突。", owner: "我", tag: "结构性", level: "red" },
+  ],
+  userActions: [
+    { title: "录 30–50 条对照集", desc: "每类 5–8 条：纯中文、中文夹英文术语、专有名词、边想边说（自我纠正）、30s+ 长句、安静/嘈杂各半。录完只放本机 ~/.voicepad/eval/。", tag: "阻塞 M0 / P3" },
+    { title: "给敏感 app 名单", desc: "哪些 app 里的录音/文本一次都不许出本机？建议至少：微信、飞书、Excel/WPS、公司文档站。", tag: "阻塞 T7 T9" },
+    { title: "定 Magpie 是否兼做 ASR 网关", desc: "兼做 → 一个 endpoint 管全部模型且有账本，多一跳；不兼做 → ASR 全本地，简单但云端流式 ASR 用不上。", tag: "架构分叉" },
+    { title: "确认保留「完全离线」降级", desc: "Magpie/网络挂掉时退回：本地 ASR + 本地 117B 改写，能力下降但可用。默认我会保留。", tag: "默认保留" },
+    { title: "授权 push 到 GitHub", desc: "本地已提交 cc744e5，尚未推送（origin 含 token，是否推由你定）。", tag: "待授权" },
+  ],
+  branches: [
+    { name: "chore/eval-harness", base: "main", target: "M0 · 11-13", risk: "低", note: "纯新增脚本与目录，不动主链" },
+    { name: "feat/model-gateway", base: "main", target: "M1 · 11-12", risk: "中", note: "改 LLMPolisher + config schema，先合它，后续都基于它" },
+    { name: "feat/context-rewrite", base: "feat/model-gateway", target: "M2 · 11-17", risk: "中", note: "新增 AX 读取层；prompt 与配置依赖 M1" },
+    { name: "feat/streaming-asr", base: "feat/model-gateway", target: "M3 · 11-25", risk: "高", note: "最贵的一步；引擎抽象先落地再并行接引擎" },
+    { name: "feat/insertion", base: "main", target: "M4 · 11-28", risk: "中", note: "与 ASR 解耦，可随时合；与 P3 的预览层有交互面" },
+    { name: "feat/learning-loop", base: "main", target: "持续", risk: "低", note: "只读 pairs.jsonl / vocabulary.json" },
+  ],
+};
+
+/* ───────────────────────── 渲染 ───────────────────────── */
+const DAY = 86400000, DAYW = 31;
+const D = s => new Date(s + "T00:00:00");
+const off = (s, base) => Math.round((D(s) - D(base)) / DAY);
+const days = off(PLAN.range.end, PLAN.range.start) + 1;
+
+const daysList = Array.from({ length: days }, (_, i) => {
+  const d = new Date(D(PLAN.range.start).getTime() + i * DAY);
+  return { d, iso: d.toISOString().slice(0, 10), dow: d.getDay(), dom: d.getDate(), month: d.getMonth() + 1 };
+});
+
+const statusOf = t => t.milestone ? "milestone" : t.status;
+const scoreOf = t => t.status === "done" ? 1 : t.status === "doing" ? 0.5 : 0;
+
+/* 统计 */
+const tasks = PLAN.tasks.filter(t => !t.milestone);
+const counts = { done: 0, doing: 0, planned: 0, blocked: 0 };
+tasks.forEach(t => counts[t.status] = (counts[t.status] || 0) + 1);
+const pct = Math.round(100 * tasks.reduce((a, t) => a + scoreOf(t), 0) / tasks.length);
+document.getElementById("pct").textContent = pct + "%";
+document.getElementById("fill").style.width = pct + "%";
+document.getElementById("s-done").textContent = counts.done || 0;
+document.getElementById("s-doing").textContent = counts.doing || 0;
+document.getElementById("s-planned").textContent = counts.planned || 0;
+document.getElementById("s-blocked").textContent = counts.blocked || 0;
+document.getElementById("chip-user").textContent = PLAN.userActions.length;
+document.getElementById("chip-block").textContent = PLAN.blockers.length;
+
+/* 甘特 */
+const gw = document.getElementById("gw");
+const labelW = 250;
+const trackW = days * DAYW;
+
+function head() {
+  const monthCells = [];
+  let prevMonth = null;
+  daysList.forEach((x, i) => {
+    const isMonthStart = x.month !== prevMonth;
+    prevMonth = x.month;
+    monthCells.push(`<div class="tick-label ${isMonthStart ? "month-start" : ""} ${(x.dow === 0 || x.dow === 6) ? "weekend" : ""}"
+      style="grid-column:${i + 1}">${isMonthStart ? x.month + "月" : (x.dom === 1 || i === 0 ? x.month + "/" + x.dom : x.dom)}</div>`);
+  });
+  return `<div class="row tick-head">
+    <div class="cell-label" style="align-items:center;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.08em">任务</div>
+    <div class="tick-row" style="position:relative;height:46px">
+      <div class="ticks" style="grid-template-columns:repeat(${days},${DAYW}px);height:100%">${monthCells.join("")}</div>
+    </div>
+  </div>`;
+}
+
+function trackInner(t, isPhase, phaseTasks) {
+  let html = "";
+  if (!isPhase) {
+    const s = off(t.start, PLAN.range.start), e = off(t.end, PLAN.range.start);
+    const w = Math.max(1, e - s + 1) * DAYW;
+    const left = s * DAYW + 2;
+    if (t.milestone) {
+      const cx = s * DAYW + DAYW / 2;
+      const nearEnd = (days - 1 - s) < 7;
+      html += `<div class="ms" style="left:${cx}px"></div>
+        <div class="ms-label" style="left:${cx + (nearEnd ? -10 : 10)}px;transform:translate(${nearEnd ? "-100%" : "0"},-50%)">${t.title}</div>`;
+    } else {
+      const cls = t.status === "blocked" ? "blocked" : t.status === "user" ? "user" : t.status;
+      const label = (w - 4) >= 78 ? t.title : "";
+      html += `<div class="bar ${cls}" style="left:${left}px;width:${w - 4}px" title="${t.title}（${t.start} → ${t.end}）">${label}</div>`;
+    }
+  }
+  return html;
+}
+
+function phaseTrack(p, list) {
+  const s = Math.min(...list.map(t => off(t.start, PLAN.range.start)));
+  const e = Math.max(...list.map(t => off(t.end, PLAN.range.start)));
+  const doneShare = list.filter(t => !t.milestone).reduce((a, t) => a + scoreOf(t), 0) / list.filter(t => !t.milestone).length;
+  return `<div class="phase-bar" style="left:${s * DAYW + 2}px;width:${Math.max(1, e - s + 1) * DAYW - 4}px">
+            <div class="pf" style="width:${Math.round(doneShare * 100)}%"></div></div>`;
+}
+
+function row(t, isPhase, list) {
+  const label = isPhase
+    ? `<div class="cell-label"><span class="tid">${t.id}</span><span class="tt">${t.name}<span class="tnote">${t.branch}</span></span></div>`
+    : t.milestone
+      ? `<div class="cell-label"><span class="tid">${t.id}</span><span class="tt" style="color:var(--accent)">${t.title}<span class="tnote">里程碑</span></span></div>`
+      : `<div class="cell-label"><span class="tid">${t.id}</span><span class="tt">${t.title}${t.note ? `<span class="tnote">${t.note}</span>` : ""}</span></div>`;
+  const track = isPhase ? phaseTrack(t, list) : trackInner(t, false, null);
+  const grid = daysList.map((_, i) => `<div class="dayline" style="left:${i * DAYW}px"></div>`).join("");
+  return `<div class="row ${isPhase ? "phase-row" : ""}">
+      ${label}
+      <div class="track-area">
+        <div style="position:relative;height:${isPhase ? 30 : 46}px;width:${trackW}px">
+          ${grid}${track}
+        </div>
+      </div>
+    </div>`;
+}
+
+(function renderGantt() {
+  let html = head();
+  PLAN.phases.forEach(p => {
+    const list = PLAN.tasks.filter(t => t.phase === p.id);
+    html += row(p, true, list);
+    list.forEach(t => html += row(t, false, null));
+  });
+  // today 竖线覆盖全高
+  const todayIdx = off(PLAN.today, PLAN.range.start);
+  html += `<div class="today" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px"></div>
+           <div class="today-flag" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px">今天 ${PLAN.today.slice(5)}</div>`;
+  gw.innerHTML = html;
+  gw.style.position = "relative";
+})();
+
+/* 卡点 / 需你处理 */
+document.getElementById("blockers").innerHTML = PLAN.blockers.map(b => `
+  <div class="item">
+    <span class="dot ${b.level}"></span>
+    <div class="body"><b>${b.id} · ${b.title}</b><p>${b.desc}</p><p style="color:var(--ink-2)">负责：${b.owner}</p></div>
+    <span class="tag">${b.tag}</span>
+  </div>`).join("");
+
+document.getElementById("user-actions").innerHTML = PLAN.userActions.map(u => `
+  <div class="item">
+    <span class="dot blue"></span>
+    <div class="body"><b>${u.title}</b><p>${u.desc}</p></div>
+    <span class="tag">${u.tag}</span>
+  </div>`).join("");
+
+/* 分支表 */
+document.getElementById("branches").innerHTML = `
+  <thead><tr><th>分支</th><th>基于</th><th>合并点</th><th>风险</th><th>说明</th></tr></thead>
+  <tbody>${PLAN.branches.map(b => `<tr><td><code>${b.name}</code></td><td>${b.base}</td><td>${b.target}</td><td>${b.risk}</td><td>${b.note}</td></tr>`).join("")}</tbody>`;
+
+document.getElementById("updated").textContent = `最近更新：${PLAN.updated}　·　区间 ${PLAN.range.start} → ${PLAN.range.end}`;
+</script>
+</body>
+</html>
