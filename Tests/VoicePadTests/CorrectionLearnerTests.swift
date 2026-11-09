@@ -48,6 +48,18 @@ struct CorrectionLearnerTests {
         #expect(result.newAliases.count == 2)
     }
 
+    @Test("Single CJK character change expands to a word using next context")
+    func cjkExpansionForward() {
+        // "做" is a stop word, so expansion falls forward to 调 → 竞调/尽调
+        let result = learner.extractCorrections(
+            original: "我们去做竞调",
+            corrected: "我们去做尽调"
+        )
+        #expect(result.newAliases.count == 1)
+        #expect(result.newAliases.first?.from == "竞调")
+        #expect(result.newAliases.first?.to == "尽调")
+    }
+
     @Test("Apply to vocabulary adds new items")
     func applyToVocabulary() {
         let result = CorrectionLearner.LearnResult(

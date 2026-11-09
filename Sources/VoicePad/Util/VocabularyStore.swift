@@ -77,13 +77,18 @@ final class VocabularyStore {
 
     // MARK: - Alias Application
 
-    /// Apply alias corrections using case-insensitive word-boundary matching.
-    /// Preserves exact CorrectionEngine.apply() regex behavior.
+    /// Apply alias corrections. Uses \b word boundaries for Latin text,
+    /// plain matching for CJK (where \b doesn't work — CJK chars aren't \w).
+    /// Longer aliases are applied first to avoid partial-match conflicts.
     func applyAliases(_ text: String, aliases: [Alias]) -> String {
         var result = text
-        for alias in aliases {
+        // Sort longest-first so "量化策略" matches before "策略"
+        let sorted = aliases.sorted { $0.from.count > $1.from.count }
+        for alias in sorted {
             let escaped = NSRegularExpression.escapedPattern(for: alias.from)
-            let regexPattern = "\\b\(escaped)\\b"
+            // \b only works around Latin word chars; CJK needs plain matching
+            let hasCJK = alias.from.unicodeScalars.contains { $0.value >= 0x4E00 && $0.value <= 0x9FFF }
+            let regexPattern = hasCJK ? escaped : "\\b\(escaped)\\b"
             do {
                 let regex = try NSRegularExpression(pattern: regexPattern, options: .caseInsensitive)
                 result = regex.stringByReplacingMatches(

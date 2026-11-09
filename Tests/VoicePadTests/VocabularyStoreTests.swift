@@ -50,6 +50,25 @@ struct VocabularyStoreTests {
         #expect(result == "Hello world")
     }
 
+    @Test("CJK alias matches without word boundaries")
+    func aliasCJK() {
+        let store = VocabularyStore.shared
+        let aliases = [Alias(from: "竞调", to: "尽调")]
+        let result = store.applyAliases("明天开始竞调", aliases: aliases)
+        #expect(result == "明天开始尽调")
+    }
+
+    @Test("Longest alias wins when aliases overlap")
+    func aliasLongestFirst() {
+        let store = VocabularyStore.shared
+        let aliases = [
+            Alias(from: "策略", to: "方案"),
+            Alias(from: "量化策略", to: "量化方案"),
+        ]
+        let result = store.applyAliases("这个量化策略不错", aliases: aliases)
+        #expect(result == "这个量化方案不错")
+    }
+
     @Test("Multiple aliases applied in order")
     func aliasMultiple() {
         let store = VocabularyStore.shared

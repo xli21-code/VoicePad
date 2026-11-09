@@ -56,32 +56,81 @@ struct CorrectionLearner {
     // MARK: - Diff & Learn
 
     /// Compare original (what VoicePad pasted) with corrected (what user changed it to).
-    /// Only extracts word-level replacements as aliases — nothing else.
+    /// Extracts word-level replacements as aliases. For CJK text, single-character changes
+    /// are expanded with adjacent context to form word-level aliases (e.g. 竞→尽 becomes 竞调→尽调).
     func extractCorrections(original: String, corrected: String) -> LearnResult {
-        let originalWords = tokenize(original)
-        let correctedWords = tokenize(corrected)
-        let diffs = computeWordDiffs(from: originalWords, to: correctedWords)
+        let originalTokens = tokenize(original)
+        let correctedTokens = tokenize(corrected)
+        let lcs = longestCommonSubsequence(originalTokens, correctedTokens)
 
+        // Collect diffs with surrounding LCS context for CJK expansion
+        struct RawDiff {
+            let from: [String]
+            let to: [String]
+            let prevLCS: String?
+            let nextLCS: String?
+        }
+
+        var rawDiffs: [RawDiff] = []
+        var oi = 0, ci = 0, li = 0
+        var prevLCS: String? = nil
+
+        while oi < originalTokens.count || ci < correctedTokens.count {
+            if li < lcs.count {
+                var del: [String] = []
+                var ins: [String] = []
+                while oi < originalTokens.count && originalTokens[oi] != lcs[li] {
+                    del.append(originalTokens[oi]); oi += 1
+                }
+                while ci < correctedTokens.count && correctedTokens[ci] != lcs[li] {
+                    ins.append(correctedTokens[ci]); ci += 1
+                }
+                if !del.isEmpty && !ins.isEmpty {
+                    rawDiffs.append(RawDiff(from: del, to: ins, prevLCS: prevLCS, nextLCS: lcs[li]))
+                }
+                prevLCS = lcs[li]
+                oi += 1; ci += 1; li += 1
+            } else {
+                var del: [String] = []
+                var ins: [String] = []
+                while oi < originalTokens.count { del.append(originalTokens[oi]); oi += 1 }
+                while ci < correctedTokens.count { ins.append(correctedTokens[ci]); ci += 1 }
+                if !del.isEmpty && !ins.isEmpty {
+                    rawDiffs.append(RawDiff(from: del, to: ins, prevLCS: prevLCS, nextLCS: nil))
+                }
+            }
+        }
+
+        // Build aliases, expanding single CJK char changes to word-level
         var newAliases: [Alias] = []
 
-        for diff in diffs {
-            switch diff {
-            case .replacement(let from, let to):
-                let fromText = joinTokens(from)
-                let toText = joinTokens(to)
-                guard !fromText.isEmpty, !toText.isEmpty else { continue }
+        for diff in rawDiffs {
+            var fromTokens = diff.from
+            var toTokens = diff.to
 
-                // Skip if identical ignoring case (pure capitalization — not worth an alias)
-                if fromText.lowercased() == toText.lowercased() { continue }
-
-                // Skip overly long replacements (> 8 tokens) — likely structural edits
-                if from.count > 8 || to.count > 8 { continue }
-
-                newAliases.append(Alias(from: fromText, to: toText))
-
-            case .insertion, .deletion:
-                break
+            // Single CJK character swapped for another → expand to 2-char word.
+            // Prefer backward (深[调→度] → 深调→深度) but skip function words (的/了/和...).
+            // Fallback to forward ([竞→尽]调 → 竞调→尽调).
+            if fromTokens.count == 1 && toTokens.count == 1
+                && fromTokens[0].count == 1 && toTokens[0].count == 1
+                && fromTokens[0].first.map(isCJK) == true
+                && toTokens[0].first.map(isCJK) == true {
+                if let prev = diff.prevLCS, isContentCJK(prev) {
+                    fromTokens.insert(prev, at: 0)
+                    toTokens.insert(prev, at: 0)
+                } else if let next = diff.nextLCS, isContentCJK(next) {
+                    fromTokens.append(next)
+                    toTokens.append(next)
+                }
             }
+
+            let fromText = joinTokens(fromTokens)
+            let toText = joinTokens(toTokens)
+            guard !fromText.isEmpty, !toText.isEmpty else { continue }
+            if fromText.lowercased() == toText.lowercased() { continue }
+            if fromTokens.count > 8 || toTokens.count > 8 { continue }
+
+            newAliases.append(Alias(from: fromText, to: toText))
         }
 
         return LearnResult(newAliases: newAliases, newTerms: [])
@@ -154,6 +203,21 @@ struct CorrectionLearner {
         return tokens
     }
 
+    /// Whether a token is a single CJK content character (not a common function word).
+    /// Used to decide if a character is worth including when expanding aliases.
+    private func isContentCJK(_ token: String) -> Bool {
+        guard token.count == 1, let char = token.first, isCJK(char) else { return false }
+        // Common function words / particles / pronouns — poor word-boundary markers
+        let stopChars: Set<Character> = [
+            "的", "了", "在", "是", "和", "或", "也", "都", "就", "会", "把", "被",
+            "让", "给", "对", "向", "从", "到", "而", "但", "却", "又", "还", "才",
+            "只", "很", "更", "最", "不", "没", "这", "那", "我", "你", "他", "她",
+            "它", "们", "有", "为", "以", "及", "与", "于", "之", "所", "做", "去",
+            "来", "上", "下", "中", "里", "用", "着", "过", "要", "能", "可", "得",
+        ]
+        return !stopChars.contains(char)
+    }
+
     /// Check if a character is CJK (Chinese/Japanese/Korean).
     private func isCJK(_ char: Character) -> Bool {
         guard let scalar = char.unicodeScalars.first else { return false }
@@ -176,72 +240,7 @@ struct CorrectionLearner {
         return tokens.joined(separator: allCJK ? "" : " ")
     }
 
-    // MARK: - Word-level Diff
-
-    private enum WordDiff {
-        case replacement(from: [String], to: [String])
-        case insertion([String])
-        case deletion([String])
-    }
-
-    /// Compute word-level diffs between two token arrays using LCS.
-    private func computeWordDiffs(from original: [String], to corrected: [String]) -> [WordDiff] {
-        let lcs = longestCommonSubsequence(original, corrected)
-        var diffs: [WordDiff] = []
-
-        var oi = 0, ci = 0, li = 0
-
-        while oi < original.count || ci < corrected.count {
-            if li < lcs.count {
-                // Collect tokens before the next LCS match
-                var deletedWords: [String] = []
-                var insertedWords: [String] = []
-
-                while oi < original.count && original[oi] != lcs[li] {
-                    deletedWords.append(original[oi])
-                    oi += 1
-                }
-                while ci < corrected.count && corrected[ci] != lcs[li] {
-                    insertedWords.append(corrected[ci])
-                    ci += 1
-                }
-
-                if !deletedWords.isEmpty && !insertedWords.isEmpty {
-                    diffs.append(.replacement(from: deletedWords, to: insertedWords))
-                } else if !deletedWords.isEmpty {
-                    diffs.append(.deletion(deletedWords))
-                } else if !insertedWords.isEmpty {
-                    diffs.append(.insertion(insertedWords))
-                }
-
-                // Skip the matching LCS word
-                oi += 1
-                ci += 1
-                li += 1
-            } else {
-                // Past the end of LCS — remaining tokens are changes
-                var deletedWords: [String] = []
-                var insertedWords: [String] = []
-                while oi < original.count {
-                    deletedWords.append(original[oi])
-                    oi += 1
-                }
-                while ci < corrected.count {
-                    insertedWords.append(corrected[ci])
-                    ci += 1
-                }
-                if !deletedWords.isEmpty && !insertedWords.isEmpty {
-                    diffs.append(.replacement(from: deletedWords, to: insertedWords))
-                } else if !deletedWords.isEmpty {
-                    diffs.append(.deletion(deletedWords))
-                } else if !insertedWords.isEmpty {
-                    diffs.append(.insertion(insertedWords))
-                }
-            }
-        }
-
-        return diffs
-    }
+    // MARK: - LCS
 
     /// Standard LCS algorithm on word arrays.
     private func longestCommonSubsequence(_ a: [String], _ b: [String]) -> [String] {
