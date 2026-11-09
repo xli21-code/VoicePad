@@ -136,11 +136,27 @@ def english_terms(text: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--script", default="docs/eval-script.md")
+    ap.add_argument("--hyp", default=None,
+                    help="JSONL of {audio, text, ms?} from another engine; "
+                         "defaults to the SenseVoice output recorded in pairs.jsonl")
+    ap.add_argument("--label", default=None, help="engine label for the report")
     args = ap.parse_args()
 
     items, sections = load_script(args.script)
     rows = [json.loads(l) for l in open(PAIRS, encoding="utf-8") if l.strip()]
     rows = [r for r in rows if r.get("audio_file")]
+
+    if args.hyp:
+        hyp = {}
+        for line in open(args.hyp, encoding="utf-8"):
+            if line.strip():
+                h = json.loads(line)
+                hyp[h["audio"]] = h
+        rows = [dict(r, raw_asr=hyp[r["audio_file"]]["text"], ms=hyp[r["audio_file"]].get("ms"))
+                for r in rows if r["audio_file"] in hyp]
+        label = args.label or os.path.basename(args.hyp)
+    else:
+        label = args.label or "SenseVoice (int8, in-app)"
 
     results, used, last = [], {}, 0
     for r in sorted(rows, key=lambda r: r["ts"]):
@@ -164,7 +180,11 @@ def main():
             used[n] = used.get(n, 0) + 1
             last = max(last, n)
 
-    scored = [r for r in results if r["cer"] is not None]
+    # CER above 1.0 means more edits than the gold has characters: either the
+    # sentence was misaligned or the model produced something unrelated (a
+    # translation, an empty tail). Keep them visible but out of the aggregates.
+    outliers = [r for r in results if r["cer"] is not None and r["cer"] > 1.0]
+    scored = [r for r in results if r["cer"] is not None and r["cer"] <= 1.0]
     total_err = sum(edit_distance(norm(r["asr"]), norm(r["gold"])) for r in scored)
     total_len = sum(len(norm(r["gold"])) for r in scored)
     overall = total_err / total_len if total_len else 0
@@ -176,18 +196,20 @@ def main():
     term_total = sum(int(r["terms"].split("/")[1]) for r in results)
 
     os.makedirs(OUT_DIR, exist_ok=True)
-    with open(os.path.join(OUT_DIR, "ref.tsv"), "w", encoding="utf-8") as f:
+    tag = re.sub(r"\W+", "_", label)[:40]
+    with open(os.path.join(OUT_DIR, f"ref_{tag}.tsv"), "w", encoding="utf-8") as f:
         f.write("audio\tdur_s\tscript_no\tcer\tterms\tgold_asr\tgold_final\thand_ref\n")
         for r in results:
             cer = "" if r["cer"] is None else f"{r['cer']:.2f}"
             f.write(f"{r['audio']}\t{r['dur']:.1f}\t{r['script_no']}\t{cer}\t{r['terms']}"
                     f"\t{r['gold']}\t{r['gold_final']}\t\n")
 
-    with open(os.path.join(OUT_DIR, "baseline.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(OUT_DIR, f"baseline_{tag}.json"), "w", encoding="utf-8") as f:
         json.dump(dict(overall_cer=overall, overall_cer_no_digits=overall_t,
                        term_survival=(term_hits, term_total),
                        utterances=results), f, ensure_ascii=False, indent=2)
 
+    print(f"engine: {label}")
     print(f"recordings: {len(results)}   matched: {len(scored)}   "
           f"script sentences: {len(items)}")
     print(f"overall CER (char, incl. number formatting): {overall:.1%}")
@@ -200,6 +222,11 @@ def main():
     print("\nworst 12 (cer_no_digits desc):")
     for r in sorted(scored, key=lambda r: -(r["cer_text"] or 0))[:12]:
         print(f"  #{r['script_no']:<3} cer={r['cer_text']:.2f} terms={r['terms']:<5} {r['asr'][:56]}")
+    if outliers:
+        print(f"\noutliers excluded from aggregates ({len(outliers)}):")
+        for r in outliers:
+            print(f"  #{r['script_no']:<3} cer={r['cer']:.2f}  {r['asr'][:60]}")
+
     print("\nper category:")
     cats = {}
     for r in scored:
@@ -215,7 +242,15 @@ def main():
         print(f"  {name:<28} cer={c['err'] / c['len'] if c['len'] else 0:5.1%}   "
               f"terms={th}/{tt}")
 
-    print(f"\nwrote {OUT_DIR}/ref.tsv and baseline.json")
+    mss = [r["ms"] for r in results if r.get("ms")]
+    if mss:
+        mss.sort()
+        p50, p90 = mss[len(mss) // 2], mss[int(len(mss) * 0.9) - 1]
+        wall = sum(r["dur"] for r in results)
+        print(f"\nlatency: p50 {p50}ms  p90 {p90}ms  "
+              f"RTF {sum(mss) / 1000 / wall:.2f} (includes process start)")
+
+    print(f"\nwrote {OUT_DIR}/ref_{tag}.tsv and baseline_{tag}.json")
 
 
 if __name__ == "__main__":
