@@ -120,9 +120,9 @@
   <header class="page">
     <div class="eyebrow">VoicePad · 迭代计划</div>
     <h1>从「本地批处理」到 Typeless 级语音输入</h1>
-    <p class="sub">质量优先路线：模型统一走 Magpie 网关（0 元本地主力 + 按需升档），录音永不因敏感而外泄（策略在发送前决定），ASR 换成「流式预览 + 停顿定稿 + 长句重解码」两段式，落字改 AX 直写。Typeless 实测 0.9–1.1s，我们以「松手 ≤1.2s 定稿、说话时可见字」为验收线。</p>
+    <p class="sub">质量优先路线：模型统一走 Magpie 网关（0 元本地主力 + 按需升档），ASR 换成「流式预览 + 停顿定稿 + 长句重解码」两段式，落字改 AX 直写。Typeless 实测 0.9–1.1s，我们以「松手 ≤1.2s 定稿、说话时可见字」为验收线。隐私分档（敏感 app 强制本地 / 读前黑名单）按你的决定移出本轮，见文末「暂缓」。</p>
     <div class="meta">
-      <span class="chip">周期 <b>11-09 → 12-06</b></span>
+      <span class="chip">周期 <b>11-09 → 12-05</b></span>
       <span class="chip">分支 <b>6 条</b></span>
       <span class="chip">里程碑 <b>6 个</b></span>
       <span class="chip warn">需你处理 <b id="chip-user">0</b> 项</span>
@@ -161,6 +161,9 @@
     <div class="card list" id="user-actions"></div>
   </div>
 
+  <h2>暂缓 <small>本轮不排期，架构上留位置</small></h2>
+  <div class="card list" id="parked"></div>
+
   <h2>分支与合并 <small>短命分支，一次只让一个分支持有 AppState</small></h2>
   <div class="card" style="overflow:hidden">
     <table id="branches"></table>
@@ -182,8 +185,8 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-09 22:40",
-  range: { start: "2026-11-09", end: "2026-12-06" },
+  updated: "2026-11-09 23:10",
+  range: { start: "2026-11-09", end: "2026-12-05" },
   today: "2026-11-09",
   phases: [
     { id: "P0", name: "评测底座", branch: "chore/eval-harness" },
@@ -194,7 +197,7 @@ const PLAN = {
     { id: "P5", name: "学习闭环", branch: "feat/learning-loop" },
   ],
   tasks: [
-    { id: "T0", phase: "P0", title: "提交既有纠错改动", note: "CJK 展开 + 填充词 + 24 tests", start: "2026-11-09", end: "2026-11-09", status: "done" },
+    { id: "T0", phase: "P0", title: "提交并推送既有纠错改动", note: "24 tests，origin/main 已同步", start: "2026-11-09", end: "2026-11-09", status: "done" },
     { id: "T1", phase: "P0", title: "录音归档（audio 与 history 关联）", note: "评测的前提，只落本机", start: "2026-11-09", end: "2026-11-10", status: "doing" },
     { id: "T2", phase: "P0", title: "对照集 30–50 条", note: "中英混说 / 术语 / 自我纠正 / 长句", start: "2026-11-09", end: "2026-11-13", status: "user" },
     { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "多引擎一键横向", start: "2026-11-10", end: "2026-11-12", status: "planned" },
@@ -203,53 +206,53 @@ const PLAN = {
     { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "润色/翻译/终稿；reasoning off", start: "2026-11-09", end: "2026-11-10", status: "doing" },
     { id: "T5", phase: "P1", title: "/v1/models 全量 picker", note: "Magpie 60 模型，按能力/价格过滤", start: "2026-11-10", end: "2026-11-11", status: "planned" },
     { id: "T6", phase: "P1", title: "空输出判失败 + 双候选竞速", note: "thinking 吃满 max_tokens 会静默返回空", start: "2026-11-10", end: "2026-11-11", status: "planned" },
-    { id: "T7", phase: "P1", title: "隐私路由：敏感 app → 本地", note: "在发送前决定，不是事后补救", start: "2026-11-11", end: "2026-11-12", status: "blocked", blocker: "B5" },
-    { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-12", end: "2026-11-12" },
+    { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-11", end: "2026-11-11" },
 
-    { id: "T8", phase: "P2", title: "AX 读取层", note: "role / 选区 / 光标前后 800 字 / 可见文本，超时兜底", start: "2026-11-12", end: "2026-11-14", status: "planned" },
-    { id: "T9", phase: "P2", title: "读前黑名单", note: "黑名单在 AX 调用之前判断", start: "2026-11-14", end: "2026-11-15", status: "blocked", blocker: "B5" },
-    { id: "T10", phase: "P2", title: "prompt v2", note: "上下文分区 / 语音编辑意图 / 英文术语保形", start: "2026-11-13", end: "2026-11-16", status: "planned" },
-    { id: "T11", phase: "P2", title: "输出守护", note: "禁答题 + 长度比例检查，防改写跑偏", start: "2026-11-16", end: "2026-11-17", status: "planned" },
-    { id: "M2", phase: "P2", milestone: true, title: "上下文改写上线", start: "2026-11-17", end: "2026-11-17" },
+    { id: "T8", phase: "P2", title: "AX 读取层", note: "role / 选区 / 光标前后 800 字 / 可见文本，超时兜底", start: "2026-11-11", end: "2026-11-13", status: "planned" },
+    { id: "T10", phase: "P2", title: "prompt v2", note: "上下文分区 / 语音编辑意图 / 英文术语保形", start: "2026-11-12", end: "2026-11-15", status: "planned" },
+    { id: "T11", phase: "P2", title: "输出守护", note: "禁答题 + 长度比例检查，防改写跑偏", start: "2026-11-15", end: "2026-11-16", status: "planned" },
+    { id: "M2", phase: "P2", milestone: true, title: "上下文改写上线", start: "2026-11-16", end: "2026-11-16" },
 
-    { id: "T12", phase: "P3", title: "引擎抽象 + Apple SpeechTranscriber", note: "macOS 26 原生流式，中文/粤语", start: "2026-11-17", end: "2026-11-19", status: "planned" },
-    { id: "T13", phase: "P3", title: "Qwen3-ASR 0.6B（CoreML）", note: "全离线主力候选", start: "2026-11-19", end: "2026-11-21", status: "planned" },
-    { id: "T14", phase: "P3", title: "VAD 分段 + 停顿定稿", note: "稳定前缀只增不改，尾部可改", start: "2026-11-20", end: "2026-11-22", status: "planned" },
-    { id: "T15", phase: "P3", title: "预览浮窗", note: "说话时可见字，灰色为未定稿", start: "2026-11-21", end: "2026-11-24", status: "planned" },
-    { id: "T16", phase: "P3", title: "长句终稿重解码", note: "60s 口述不再一次性硬喂", start: "2026-11-24", end: "2026-11-25", status: "planned" },
-    { id: "M3", phase: "P3", milestone: true, title: "边说边出字", start: "2026-11-25", end: "2026-11-25" },
+    { id: "T12", phase: "P3", title: "引擎抽象 + Apple SpeechTranscriber", note: "macOS 26 原生流式，中文/粤语", start: "2026-11-16", end: "2026-11-18", status: "planned" },
+    { id: "T13", phase: "P3", title: "Qwen3-ASR 0.6B（CoreML）", note: "全离线主力候选", start: "2026-11-18", end: "2026-11-20", status: "planned" },
+    { id: "T14", phase: "P3", title: "VAD 分段 + 停顿定稿", note: "稳定前缀只增不改，尾部可改", start: "2026-11-19", end: "2026-11-21", status: "planned" },
+    { id: "T15", phase: "P3", title: "预览浮窗", note: "说话时可见字，灰色为未定稿", start: "2026-11-20", end: "2026-11-23", status: "planned" },
+    { id: "T16", phase: "P3", title: "长句终稿重解码", note: "60s 口述不再一次性硬喂", start: "2026-11-23", end: "2026-11-24", status: "planned" },
+    { id: "M3", phase: "P3", milestone: true, title: "边说边出字", start: "2026-11-24", end: "2026-11-24" },
 
-    { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-25", end: "2026-11-27", status: "planned" },
-    { id: "T18", phase: "P4", title: "预览期增量替换", note: "定稿段替换灰字，不重粘全文", start: "2026-11-26", end: "2026-11-28", status: "planned" },
-    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-28", end: "2026-11-28", status: "planned" },
-    { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-28", end: "2026-11-28" },
+    { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-24", end: "2026-11-26", status: "planned" },
+    { id: "T18", phase: "P4", title: "预览期增量替换", note: "定稿段替换灰字，不重粘全文", start: "2026-11-25", end: "2026-11-27", status: "planned" },
+    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-27", end: "2026-11-27", status: "planned" },
+    { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-27", end: "2026-11-27" },
 
-    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "词表直进化器，不只塞 prompt", start: "2026-11-29", end: "2026-11-30", status: "planned" },
-    { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "同一句在 Slack / 代码 产出不同格式", start: "2026-11-30", end: "2026-12-04", status: "planned" },
-    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-12-04", end: "2026-12-06", status: "planned" },
-    { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-12-06", end: "2026-12-06" },
+    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "词表直进化器，不只塞 prompt", start: "2026-11-28", end: "2026-11-29", status: "planned" },
+    { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "同一句在 Slack / 代码 产出不同格式", start: "2026-11-29", end: "2026-12-03", status: "planned" },
+    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-12-03", end: "2026-12-05", status: "planned" },
+    { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-12-05", end: "2026-12-05" },
   ],
   blockers: [
-    { id: "B1", title: "Magpie 能否注册 audio/STT provider", desc: "端点 /v1/audio/transcriptions 已存在但无 audio 模型。能注册 → ASR 也进网关；不能 → ASR 全本地，网关只管改写。", owner: "你 + 我", tag: "待定", level: "red" },
+    { id: "B1", title: "Magpie 能否注册 audio/STT provider", desc: "端点 /v1/audio/transcriptions 已存在但无 audio 模型。只影响「云端 ASR 是否也进网关」，本地 ASR 路线不受影响，故不再阻塞。", owner: "我", tag: "可后置", level: "grey" },
     { id: "B2", title: "对照集还没录", desc: "没有 30–50 条带音频的原始 ASR / 定稿对照组，CER 无从比较，换引擎只是靠感觉。", owner: "你", tag: "阻塞 T3", level: "red" },
     { id: "B3", title: "Apple Speech 中英混说表现未知", desc: "它支持中文/粤语，但「大量英文术语夹在中文句子里」是否把术语转成汉字，只有对照集能回答。", owner: "我", tag: "待验证", level: "grey" },
     { id: "B4", title: "SenseVoice 当前加载的是 937MB 浮点模型", desc: "盘上同时有 model.onnx 与 model.int8.onnx，代码取前者。内存与解码时延可能白付 4 倍。", owner: "我", tag: "小", level: "grey" },
-    { id: "B5", title: "敏感 app 名单未定", desc: "没有名单，隐私路由和「读前黑名单」都没法实现。参考 Typeless 默认：微信 / Excel / WPS / Sublime / Google Docs。", owner: "你", tag: "阻塞 T7 T9", level: "red" },
-    { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。先抽 DictationPipeline，否则每条分支合并都要手工解冲突。", owner: "我", tag: "结构性", level: "red" },
+    { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。P1 结束前先抽 DictationPipeline，否则每条分支合并都要手工解冲突。", owner: "我", tag: "结构性", level: "red" },
   ],
   userActions: [
-    { title: "录 30–50 条对照集", desc: "每类 5–8 条：纯中文、中文夹英文术语、专有名词、边想边说（自我纠正）、30s+ 长句、安静/嘈杂各半。录完只放本机 ~/.voicepad/eval/。", tag: "阻塞 M0 / P3" },
-    { title: "给敏感 app 名单", desc: "哪些 app 里的录音/文本一次都不许出本机？建议至少：微信、飞书、Excel/WPS、公司文档站。", tag: "阻塞 T7 T9" },
-    { title: "定 Magpie 是否兼做 ASR 网关", desc: "兼做 → 一个 endpoint 管全部模型且有账本，多一跳；不兼做 → ASR 全本地，简单但云端流式 ASR 用不上。", tag: "架构分叉" },
-    { title: "确认保留「完全离线」降级", desc: "Magpie/网络挂掉时退回：本地 ASR + 本地 117B 改写，能力下降但可用。默认我会保留。", tag: "默认保留" },
-    { title: "授权 push 到 GitHub", desc: "本地已提交 cc744e5，尚未推送（origin 含 token，是否推由你定）。", tag: "待授权" },
+    { title: "录 30–50 条对照集", desc: "每类 5–8 条：纯中文、中文夹英文术语、专有名词、边想边说（自我纠正）、30s+ 长句、安静/嘈杂各半。只放本机 ~/.voicepad/eval/。", tag: "阻塞 M0 / P3" },
+    { title: "定 ASR 网关策略", desc: "本地引擎留在进程内（默认），云端 ASR 直连还是经 Magpie？后者能白拿账本与配额，等 B1 结论再定也行。", tag: "非阻塞" },
+    { title: "确认「完全离线」降级保留", desc: "Magpie/网络挂掉时退回本地 ASR + 本地 117B 改写。默认保留，若不同意现在就改。", tag: "默认保留" },
+  ],
+  parked: [
+    { title: "隐私三档路由 + 读前黑名单", desc: "敏感 app → 只走本地模型、且不读上下文。你已定暂缓；恢复前需要先给敏感 app 名单（微信/飞书/Excel/WPS/公司文档站）。架构上留好位置：模型选择在发送前完成，不做事后补救。" },
+    { title: "云端流式 ASR 接入", desc: "Deepgram / realtime 类 WS 流式识别。取决于 B1 与对照集结果：本地引擎够用就不接，接的话也走 ASREngine 协议，不污染主链。" },
+    { title: "语音编辑选中文本", desc: "Typeless 的招牌功能之一（「把上面那句改成…」）。依赖 P2 的 AX 层，AX 落地后可随时插队，不需要单独排期。" },
   ],
   branches: [
     { name: "chore/eval-harness", base: "main", target: "M0 · 11-13", risk: "低", note: "纯新增脚本与目录，不动主链" },
-    { name: "feat/model-gateway", base: "main", target: "M1 · 11-12", risk: "中", note: "改 LLMPolisher + config schema，先合它，后续都基于它" },
-    { name: "feat/context-rewrite", base: "feat/model-gateway", target: "M2 · 11-17", risk: "中", note: "新增 AX 读取层；prompt 与配置依赖 M1" },
-    { name: "feat/streaming-asr", base: "feat/model-gateway", target: "M3 · 11-25", risk: "高", note: "最贵的一步；引擎抽象先落地再并行接引擎" },
-    { name: "feat/insertion", base: "main", target: "M4 · 11-28", risk: "中", note: "与 ASR 解耦，可随时合；与 P3 的预览层有交互面" },
+    { name: "feat/model-gateway", base: "main", target: "M1 · 11-11", risk: "中", note: "改 LLMPolisher + config schema，先合它，后续都基于它" },
+    { name: "feat/context-rewrite", base: "feat/model-gateway", target: "M2 · 11-16", risk: "中", note: "新增 AX 读取层；prompt 与配置依赖 M1" },
+    { name: "feat/streaming-asr", base: "feat/model-gateway", target: "M3 · 11-24", risk: "高", note: "最贵的一步；引擎抽象先落地再并行接引擎" },
+    { name: "feat/insertion", base: "main", target: "M4 · 11-27", risk: "中", note: "与 ASR 解耦，可随时合；与 P3 的预览层有交互面" },
     { name: "feat/learning-loop", base: "main", target: "持续", risk: "低", note: "只读 pairs.jsonl / vocabulary.json" },
   ],
 };
@@ -378,6 +381,14 @@ document.getElementById("user-actions").innerHTML = PLAN.userActions.map(u => `
     <span class="dot blue"></span>
     <div class="body"><b>${u.title}</b><p>${u.desc}</p></div>
     <span class="tag">${u.tag}</span>
+  </div>`).join("");
+
+/* 暂缓 */
+document.getElementById("parked").innerHTML = PLAN.parked.map(u => `
+  <div class="item">
+    <span class="dot grey"></span>
+    <div class="body"><b>${u.title}</b><p>${u.desc}</p></div>
+    <span class="tag">暂缓</span>
   </div>`).join("");
 
 /* 分支表 */
