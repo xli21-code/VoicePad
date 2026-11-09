@@ -61,16 +61,17 @@ final class WhisperKitEngine: ASREngine {
             } else {
                 folder = try await downloadModel()
             }
-            // ANE (the WhisperKit default on macOS) hung inside CoreML's model loader on
-            // this machine — idle CPU, no progress for minutes. GPU loads in seconds, so we
-            // pin it explicitly instead of relying on the default compute placement.
+            // Compute placement was measured on this machine (M4 Pro, macOS 26.6):
+            // - encoder on ANE hangs inside CoreML's loader (125 s, then never returns)
+            // - decoder on ANE is fine and ~25% faster than GPU (1.22 s vs 1.62 s per clip)
+            // so: encoder stays on GPU, decoder goes to ANE.
             let config = WhisperKitConfig(
                 modelFolder: folder.path,
                 tokenizerFolder: localTokenizerFolder,
                 computeOptions: ModelComputeOptions(
                     melCompute: .cpuAndGPU,
                     audioEncoderCompute: .cpuAndGPU,
-                    textDecoderCompute: .cpuAndGPU
+                    textDecoderCompute: .cpuAndNeuralEngine
                 ),
                 verbose: false,
                 logLevel: .error,
@@ -78,12 +79,32 @@ final class WhisperKitEngine: ASREngine {
                 load: true,
                 download: false
             )
-            pipe = try await WhisperKit(config)
+            let loaded = try await WhisperKit(config)
+            pipe = loaded
+            await warmUpDecode(with: loaded)
             vpLog("[WhisperKitEngine] ready: \(Self.variant)")
         } catch {
             loadError = error.localizedDescription
             vpLog("[WhisperKitEngine] load failed: \(error)")
         }
+    }
+
+    /// The first real decode after loading pays a ~3 s graph-specialisation cost, which
+    /// lands exactly on the user's first dictation. Burn it here on silence instead.
+    private func warmUpDecode(with pipe: WhisperKit) async {
+        let silence = [Float](repeating: 0, count: 16000 * 3)
+        var options = DecodingOptions()
+        options.task = .transcribe
+        options.language = "zh"
+        options.temperature = 0
+        options.withoutTimestamps = true
+        options.skipSpecialTokens = true
+        // Without this, Whisper treats silence as "no speech" and returns in 3 ms,
+        // which warms nothing. The transcript is thrown away.
+        options.noSpeechThreshold = 0
+        let started = Date()
+        _ = try? await pipe.transcribe(audioArray: silence, audioArrayOffset: 0, decodeOptions: options)
+        vpLog("[WhisperKitEngine] warm-up decode \(Int(Date().timeIntervalSince(started) * 1000))ms")
     }
 
     private func downloadModel() async throws -> URL {
@@ -118,11 +139,14 @@ final class WhisperKitEngine: ASREngine {
         }
 
         do {
+            let started = Date()
             let results = try await pipe.transcribe(
                 audioArray: samples,
                 audioArrayOffset: 0,
                 decodeOptions: options
             )
+            let ms = Int(Date().timeIntervalSince(started) * 1000)
+            vpLog("[WhisperKitEngine] decode \(ms)ms for \(String(format: "%.1f", Double(samples.count) / 16000))s audio")
             let text = results.map(\.text).joined().trimmingCharacters(in: .whitespacesAndNewlines)
             guard !text.isEmpty else { return nil }
             return TranscriptResult(text: text, language: "zh")
