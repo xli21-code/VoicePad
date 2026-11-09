@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 00:05",
+  updated: "2026-11-10 00:30",
   range: { start: "2026-11-09", end: "2026-12-05" },
   today: "2026-11-09",
   phases: [
@@ -199,11 +199,11 @@ const PLAN = {
   tasks: [
     { id: "T0", phase: "P0", title: "提交并推送既有纠错改动", note: "24 tests，origin/main 已同步", start: "2026-11-09", end: "2026-11-09", status: "done" },
     { id: "T1", phase: "P0", title: "录音归档（audio 与 history 关联）", note: "WAV 落 ~/.voicepad/audio/，pairs.jsonl 记 audio_file", start: "2026-11-09", end: "2026-11-10", status: "done" },
-    { id: "T2", phase: "P0", title: "对照集 30–50 条", note: "docs/eval-script.md 有 36 句现成脚本", start: "2026-11-09", end: "2026-11-13", status: "user" },
-    { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "多引擎一键横向", start: "2026-11-10", end: "2026-11-12", status: "planned" },
+    { id: "T2", phase: "P0", title: "对照集 30–50 条", note: "37 条已入库，WAV 全部校验通过", start: "2026-11-09", end: "2026-11-10", status: "done" },
+    { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "基线已出 CER 16.5% / 术语 60%，待接更多引擎", start: "2026-11-10", end: "2026-11-12", status: "doing" },
     { id: "M0", phase: "P0", milestone: true, title: "评测可跑", start: "2026-11-13", end: "2026-11-13" },
 
-    { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "润色/翻译/终稿；reasoning off", start: "2026-11-09", end: "2026-11-10", status: "doing" },
+    { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "润色/翻译/终稿；reasoning off", start: "2026-11-10", end: "2026-11-11", status: "planned" },
     { id: "T5", phase: "P1", title: "/v1/models 全量 picker", note: "Magpie 60 模型，按能力/价格过滤", start: "2026-11-10", end: "2026-11-11", status: "planned" },
     { id: "T6", phase: "P1", title: "空输出判失败 + 双候选竞速", note: "thinking 吃满 max_tokens 会静默返回空", start: "2026-11-10", end: "2026-11-11", status: "planned" },
     { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-11", end: "2026-11-11" },
@@ -225,7 +225,7 @@ const PLAN = {
     { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-27", end: "2026-11-27", status: "planned" },
     { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-27", end: "2026-11-27" },
 
-    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "词表直进化器，不只塞 prompt", start: "2026-11-28", end: "2026-11-29", status: "planned" },
+    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "基线证明这是最高杠杆：术语 60% 存活", start: "2026-11-26", end: "2026-11-27", status: "planned" },
     { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "同一句在 Slack / 代码 产出不同格式", start: "2026-11-29", end: "2026-12-03", status: "planned" },
     { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-12-03", end: "2026-12-05", status: "planned" },
     { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-12-05", end: "2026-12-05" },
