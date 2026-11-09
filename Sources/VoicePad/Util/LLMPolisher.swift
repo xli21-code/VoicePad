@@ -2,9 +2,15 @@ import Foundation
 
 /// Configuration loaded from ~/.voicepad/config.json.
 struct VoicePadConfig {
+    /// Effective API key, or nil when none is configured. Empty string means "no auth header" (local gateway).
     let apiKey: String?
     let baseURL: String
+    /// Model used for polish (and the legacy single-model config).
     let model: String
+    /// Model used for translation; falls back to the polish model.
+    let translateModel: String
+    /// Model used for vocabulary import; falls back to the polish model.
+    let importModel: String
 
     static let defaultBaseURL = "https://api.anthropic.com"
     static let defaultModel = "claude-sonnet-4-5-20241022"
@@ -17,6 +23,68 @@ struct VoicePadConfig {
         ("claude-opus-4-6", "Claude Opus 4.6"),
         ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
     ]
+
+    /// Local gateways (e.g. Magpie on 127.0.0.1:3425) do not require an API key.
+    static func isLocalHost(_ urlString: String) -> Bool {
+        guard let host = URL(string: urlString)?.host?.lowercased() else { return false }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    var isLocalBaseURL: Bool { Self.isLocalHost(baseURL) }
+
+    /// Key to use for requests. A local base URL may run without one.
+    var effectiveAPIKey: String? {
+        if let apiKey, !apiKey.isEmpty { return apiKey }
+        return isLocalBaseURL ? "" : nil
+    }
+
+    /// Resolve config from raw JSON. Prefers the v2 `provider` / `models` objects and falls back
+    /// to the legacy keys (`anthropic_api_key`, `api_base_url`, `model`).
+    static func resolve(json: [String: Any], environmentKey: String? = nil) -> VoicePadConfig {
+        let provider = json["provider"] as? [String: Any]
+        let models = json["models"] as? [String: Any]
+
+        func nonEmptyString(_ dict: [String: Any]?, _ key: String) -> String? {
+            guard let value = dict?[key] as? String, !value.isEmpty else { return nil }
+            return value
+        }
+
+        var apiKey: String?
+        if let environmentKey, !environmentKey.isEmpty {
+            apiKey = environmentKey
+        }
+        if apiKey == nil {
+            apiKey = nonEmptyString(provider, "api_key")
+        }
+        if apiKey == nil {
+            apiKey = nonEmptyString(json, "anthropic_api_key")
+        }
+
+        let rawBaseURL = nonEmptyString(provider, "base_url")
+            ?? nonEmptyString(json, "api_base_url")
+            ?? defaultBaseURL
+        let baseURL = rawBaseURL.hasSuffix("/") ? String(rawBaseURL.dropLast()) : rawBaseURL
+
+        let legacyModel = nonEmptyString(json, "model")
+        let polishModel = nonEmptyString(models, "polish") ?? legacyModel ?? defaultModel
+        let translateModel = nonEmptyString(models, "translate") ?? legacyModel ?? defaultModel
+        let importModel = nonEmptyString(models, "import") ?? polishModel
+
+        return VoicePadConfig(
+            apiKey: apiKey,
+            baseURL: baseURL,
+            model: polishModel,
+            translateModel: translateModel,
+            importModel: importModel
+        )
+    }
+}
+
+/// A model returned by an OpenAI-compatible `/v1/models` endpoint.
+struct RemoteModel: Identifiable, Equatable {
+    let id: String
+    let ownedBy: String
+    let displayName: String?
 }
 
 /// A saved API connection profile.
@@ -44,30 +112,15 @@ final class LLMPolisher {
 
     /// Load all config from ~/.voicepad/config.json in a single read.
     func loadConfig() -> VoicePadConfig {
-        var apiKey: String?
-        var baseURL = VoicePadConfig.defaultBaseURL
-        var model = VoicePadConfig.defaultModel
-
-        // Check environment variable first for API key
-        if let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"], !envKey.isEmpty {
-            apiKey = envKey
-        }
-
-        // Read config file
+        var json: [String: Any] = [:]
         if let data = FileManager.default.contents(atPath: configPath),
-           let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-            if apiKey == nil, let key = json["anthropic_api_key"] as? String, !key.isEmpty {
-                apiKey = key
-            }
-            if let url = json["api_base_url"] as? String, !url.isEmpty {
-                baseURL = url.hasSuffix("/") ? String(url.dropLast()) : url
-            }
-            if let m = json["model"] as? String, !m.isEmpty {
-                model = m
-            }
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            json = parsed
         }
 
-        return VoicePadConfig(apiKey: apiKey, baseURL: baseURL, model: model)
+        // Environment variable wins for the API key, as before.
+        let envKey = ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]
+        return VoicePadConfig.resolve(json: json, environmentKey: envKey)
     }
 
     /// Save config values to file.
@@ -80,9 +133,29 @@ final class LLMPolisher {
             json = existing
         }
 
-        if let apiKey { json["anthropic_api_key"] = apiKey }
-        if let baseURL { json["api_base_url"] = baseURL }
-        if let model { json["model"] = model }
+        // Keep writing the legacy keys, and mirror them into an existing v2 `provider` / `models`
+        // object so saved settings are not shadowed by values that loadConfig() prefers.
+        if let apiKey {
+            json["anthropic_api_key"] = apiKey
+            if var provider = json["provider"] as? [String: Any] {
+                provider["api_key"] = apiKey
+                json["provider"] = provider
+            }
+        }
+        if let baseURL {
+            json["api_base_url"] = baseURL
+            if var provider = json["provider"] as? [String: Any] {
+                provider["base_url"] = baseURL
+                json["provider"] = provider
+            }
+        }
+        if let model {
+            json["model"] = model
+            if var models = json["models"] as? [String: Any] {
+                models["polish"] = model
+                json["models"] = models
+            }
+        }
 
         if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {
             ConfigDirectory.ensureExists()
@@ -91,7 +164,7 @@ final class LLMPolisher {
     }
 
     func hasAPIKey() -> Bool {
-        loadConfig().apiKey != nil
+        loadConfig().effectiveAPIKey != nil
     }
 
     // MARK: - Profiles
@@ -156,7 +229,9 @@ final class LLMPolisher {
             request.httpMethod = method
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
-            request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            if !apiKey.isEmpty {
+                request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
+            }
             request.timeoutInterval = timeout
             if let body {
                 request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -221,7 +296,8 @@ final class LLMPolisher {
     }
 
     /// Fetch available models from the API server. Tries /v1/models then /models.
-    func fetchModels(apiKey: String, baseURL: String?) async -> [String]? {
+    /// Embedding and rerank models are dropped; the result is sorted by owner then id.
+    func fetchModels(apiKey: String, baseURL: String?) async -> [RemoteModel]? {
         let base = (baseURL?.isEmpty ?? true) ? VoicePadConfig.defaultBaseURL : baseURL!
         let finalBase = base.hasSuffix("/") ? String(base.dropLast()) : base
 
@@ -231,7 +307,20 @@ final class LLMPolisher {
 
         if let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
            let models = json["data"] as? [[String: Any]] {
-            return models.compactMap { $0["id"] as? String }.sorted()
+            let parsed = models.compactMap { dict -> RemoteModel? in
+                guard let id = dict["id"] as? String else { return nil }
+                let lower = id.lowercased()
+                guard !lower.contains("embed"), !lower.contains("rerank") else { return nil }
+                return RemoteModel(
+                    id: id,
+                    ownedBy: (dict["owned_by"] as? String) ?? "",
+                    displayName: dict["display_name"] as? String
+                )
+            }
+            return parsed.sorted {
+                if $0.ownedBy != $1.ownedBy { return $0.ownedBy < $1.ownedBy }
+                return $0.id < $1.id
+            }
         }
         return nil
     }
@@ -242,10 +331,10 @@ final class LLMPolisher {
     /// Used by ImportEngine and other callers that need raw LLM access.
     func call(prompt: String, maxTokens: Int = 1024) async throws -> String {
         let config = loadConfig()
-        guard let apiKey = config.apiKey else {
+        guard let apiKey = config.effectiveAPIKey else {
             throw PolishError.apiError(0, "No API key configured")
         }
-        return try await callLLM(config: config, apiKey: apiKey, prompt: prompt, maxTokens: maxTokens)
+        return try await callLLM(config: config, apiKey: apiKey, model: config.importModel, prompt: prompt, maxTokens: maxTokens)
     }
 
     // MARK: - Polish
@@ -254,7 +343,7 @@ final class LLMPolisher {
     /// Returns the polished text, or nil if polishing fails.
     func polish(_ text: String, dictionaryTerms: [String] = [], appBranchPrompt: String? = nil) async -> String? {
         let config = loadConfig()
-        guard let apiKey = config.apiKey else {
+        guard let apiKey = config.effectiveAPIKey else {
             vpLog("[LLMPolisher] No API key found")
             return nil
         }
@@ -262,7 +351,7 @@ final class LLMPolisher {
         let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms, appBranchPrompt: appBranchPrompt)
 
         do {
-            let result = try await callLLM(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
+            let result = try await callLLM(config: config, apiKey: apiKey, model: config.model, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
             vpLog("[LLMPolisher] polished: '\(result.prefix(80))'")
             return result
         } catch {
@@ -278,7 +367,7 @@ final class LLMPolisher {
     /// Returns translated text, or nil on failure.
     func translate(_ text: String) async -> String? {
         let config = loadConfig()
-        guard let apiKey = config.apiKey else {
+        guard let apiKey = config.effectiveAPIKey else {
             vpLog("[LLMPolisher] No API key for translation")
             return nil
         }
@@ -294,7 +383,7 @@ final class LLMPolisher {
         """
 
         do {
-            let result = try await callLLM(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
+            let result = try await callLLM(config: config, apiKey: apiKey, model: config.translateModel, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
             vpLog("[LLMPolisher] translated: '\(result.prefix(80))'")
             return result
         } catch {
@@ -348,21 +437,47 @@ final class LLMPolisher {
 
     // MARK: - LLM API (Anthropic + OpenAI compatible)
 
-    private func callLLM(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
-        if isOpenAIModel(config.model) {
-            return try await callOpenAI(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
+    /// Trimmed output must be non-empty and at least 30% of the input length,
+    /// otherwise a reasoning model likely burned the token budget and returned nothing.
+    static func isUsableOutput(_ output: String, for input: String) -> Bool {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        let inputCount = input.trimmingCharacters(in: .whitespacesAndNewlines).count
+        guard inputCount > 0 else { return true }
+        return trimmed.count * 10 >= inputCount * 3
+    }
+
+    private func callLLM(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+        let input = userText ?? prompt ?? ""
+        var tokens = maxTokens
+
+        for attempt in 1...2 {
+            let result = try await callAPI(config: config, apiKey: apiKey, model: model, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: tokens)
+            if Self.isUsableOutput(result, for: input) {
+                return result
+            }
+            vpLog("[LLMPolisher] unusable output (attempt \(attempt), max_tokens=\(tokens)): '\(result.prefix(80))'")
+            tokens *= 2
+        }
+
+        throw PolishError.unusableOutput
+    }
+
+    private func callAPI(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+        if isOpenAIModel(model) {
+            return try await callOpenAI(config: config, apiKey: apiKey, model: model, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
         } else {
-            return try await callClaude(config: config, apiKey: apiKey, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
+            return try await callClaude(config: config, apiKey: apiKey, model: model, systemPrompt: systemPrompt, userText: userText, prompt: prompt, maxTokens: maxTokens)
         }
     }
 
-    private func callClaude(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+    private func callClaude(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
         let finalBase = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
-        vpLog("[LLMPolisher] calling Anthropic API: \(finalBase)/[v1/]messages with model=\(config.model)")
+        vpLog("[LLMPolisher] calling Anthropic API: \(finalBase)/[v1/]messages with model=\(model)")
 
         let messageContent = userText ?? prompt ?? ""
         var body: [String: Any] = [
-            "model": config.model,
+            "model": model,
             "max_tokens": maxTokens,
             "temperature": 0.3,
             "messages": [
@@ -394,9 +509,9 @@ final class LLMPolisher {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func callOpenAI(config: VoicePadConfig, apiKey: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
+    private func callOpenAI(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
         let finalBase = config.baseURL.hasSuffix("/") ? String(config.baseURL.dropLast()) : config.baseURL
-        vpLog("[LLMPolisher] calling OpenAI-compatible API: \(finalBase)/v1/chat/completions with model=\(config.model)")
+        vpLog("[LLMPolisher] calling OpenAI-compatible API: \(finalBase)/v1/chat/completions with model=\(model)")
 
         let messageContent = userText ?? prompt ?? ""
         var messages: [[String: String]] = []
@@ -405,15 +520,30 @@ final class LLMPolisher {
         }
         messages.append(["role": "user", "content": messageContent])
 
-        let body: [String: Any] = [
-            "model": config.model,
+        var body: [String: Any] = [
+            "model": model,
             "max_tokens": maxTokens,
             "temperature": 0.3,
-            "messages": messages
+            "messages": messages,
+            "reasoning_effort": "none"
         ]
 
-        guard let (data, httpResponse) = await tryRequestOpenAI(base: finalBase, path: "/chat/completions", apiKey: apiKey,
-                                                                  body: body, timeout: 30) else {
+        var response = await tryRequestOpenAI(base: finalBase, path: "/chat/completions", apiKey: apiKey,
+                                              body: body, timeout: 30)
+
+        // Some providers reject unknown fields. If reasoning_effort is the objection, retry once without it.
+        if let result = response, result.1.statusCode == 400 {
+            let respBody = String(data: result.0, encoding: .utf8) ?? ""
+            let lower = respBody.lowercased()
+            if lower.contains("reasoning") || lower.contains("effort") {
+                vpLog("[LLMPolisher] provider rejected reasoning_effort, retrying once without it")
+                body.removeValue(forKey: "reasoning_effort")
+                response = await tryRequestOpenAI(base: finalBase, path: "/chat/completions", apiKey: apiKey,
+                                                  body: body, timeout: 30)
+            }
+        }
+
+        guard let (data, httpResponse) = response else {
             throw PolishError.invalidResponse
         }
 
@@ -426,12 +556,14 @@ final class LLMPolisher {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
               let firstChoice = choices.first,
-              let message = firstChoice["message"] as? [String: Any],
-              let text = message["content"] as? String else {
+              let message = firstChoice["message"] as? [String: Any] else {
             vpLog("[LLMPolisher] OpenAI parse error, data: \(String(data: data, encoding: .utf8)?.prefix(300) ?? "nil")")
             throw PolishError.parseError
         }
 
+        // A reasoning model can return null/empty content when it exhausts the budget;
+        // treat that as empty output so the sanity check retries.
+        let text = message["content"] as? String ?? ""
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
@@ -445,7 +577,9 @@ final class LLMPolisher {
             var request = URLRequest(url: url)
             request.httpMethod = method
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            if !apiKey.isEmpty {
+                request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+            }
             request.timeoutInterval = timeout
             if let body {
                 request.httpBody = try? JSONSerialization.data(withJSONObject: body)
@@ -497,12 +631,14 @@ enum PolishError: LocalizedError {
     case invalidResponse
     case apiError(Int, String)
     case parseError
+    case unusableOutput
 
     var errorDescription: String? {
         switch self {
         case .invalidResponse: "Invalid response from API"
         case .apiError(let code, _): "API error: \(code)"
         case .parseError: "Failed to parse API response"
+        case .unusableOutput: "Model returned empty or truncated output"
         }
     }
 }

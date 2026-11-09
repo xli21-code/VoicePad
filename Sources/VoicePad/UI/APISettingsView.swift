@@ -7,7 +7,7 @@ struct APISettingsView: View {
     @State private var model = VoicePadConfig.defaultModel
     @State private var testStatus: TestStatus = .idle
     @State private var testMessage = ""
-    @State private var remoteModels: [String] = []
+    @State private var remoteModels: [RemoteModel] = []
     @State private var profiles: [APIProfile] = []
     @State private var selectedProfile = ""
 
@@ -77,20 +77,30 @@ struct APISettingsView: View {
                 }
 
                 LabeledContent("Model") {
-                    if remoteModels.isEmpty {
-                        Picker("", selection: $model) {
-                            ForEach(VoicePadConfig.availableModels, id: \.id) { m in
-                                Text(m.label).tag(m.id)
+                    VStack(alignment: .leading, spacing: 6) {
+                        if remoteModels.isEmpty {
+                            Picker("", selection: $model) {
+                                ForEach(VoicePadConfig.availableModels, id: \.id) { m in
+                                    Text(m.label).tag(m.id)
+                                }
                             }
-                        }
-                        .labelsHidden()
-                    } else {
-                        Picker("", selection: $model) {
-                            ForEach(remoteModels, id: \.self) { m in
-                                Text(m).tag(m)
+                            .labelsHidden()
+                        } else {
+                            Picker("", selection: $model) {
+                                ForEach(remoteModelGroups, id: \.owner) { group in
+                                    Section(group.owner.isEmpty ? "Other" : group.owner) {
+                                        ForEach(group.models) { m in
+                                            Text(m.displayName ?? m.id).tag(m.id)
+                                        }
+                                    }
+                                }
                             }
+                            .labelsHidden()
                         }
-                        .labelsHidden()
+
+                        TextField("or type a model id", text: $model)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.caption.monospaced())
                     }
                 }
             } header: {
@@ -105,7 +115,7 @@ struct APISettingsView: View {
             Section {
                 HStack {
                     Button("Test Connection") { testConnection() }
-                        .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty || testStatus == .testing)
+                        .disabled((apiKey.trimmingCharacters(in: .whitespaces).isEmpty && !isLocalEndpoint) || testStatus == .testing)
 
                     if testStatus == .testing {
                         ProgressView()
@@ -145,6 +155,34 @@ struct APISettingsView: View {
         apiKey = config.apiKey ?? ""
         baseURL = config.baseURL == VoicePadConfig.defaultBaseURL ? "" : config.baseURL
         model = config.model
+    }
+
+    private var effectiveBaseURL: String {
+        let url = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        return url.isEmpty ? VoicePadConfig.defaultBaseURL : url
+    }
+
+    private var isLocalEndpoint: Bool {
+        VoicePadConfig.isLocalHost(effectiveBaseURL)
+    }
+
+    private struct RemoteModelGroup: Identifiable {
+        let owner: String
+        let models: [RemoteModel]
+        var id: String { owner }
+    }
+
+    /// Fetched models are already sorted by owned_by then id; group them for the picker.
+    private var remoteModelGroups: [RemoteModelGroup] {
+        var groups: [RemoteModelGroup] = []
+        for remote in remoteModels {
+            if let idx = groups.firstIndex(where: { $0.owner == remote.ownedBy }) {
+                groups[idx] = RemoteModelGroup(owner: groups[idx].owner, models: groups[idx].models + [remote])
+            } else {
+                groups.append(RemoteModelGroup(owner: remote.ownedBy, models: [remote]))
+            }
+        }
+        return groups
     }
 
     private func loadProfiles() {
@@ -196,7 +234,7 @@ struct APISettingsView: View {
 
     private func testConnection() {
         let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
+        guard !key.isEmpty || isLocalEndpoint else {
             testStatus = .error
             testMessage = "Please enter API Key"
             return
@@ -223,9 +261,9 @@ struct APISettingsView: View {
             await MainActor.run {
                 if let models = fetchedModels, !models.isEmpty {
                     remoteModels = models
-                    if !models.contains(model), let first = models.first {
-                        model = first
-                        vpLog("[APISettings] Auto-selected model: \(first)")
+                    if !models.contains(where: { $0.id == model }), let first = models.first {
+                        model = first.id
+                        vpLog("[APISettings] Auto-selected model: \(first.id)")
                     }
                 }
 
