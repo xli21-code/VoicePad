@@ -370,6 +370,12 @@ final class AppState {
         )
         historyStore.append(entry)
 
+        // Archive the audio locally (off the main thread) so ASR engines can later be
+        // benchmarked on real speech. Failure is non-fatal.
+        let audioFile = await Task.detached(priority: .utility) {
+            AudioArchive.save(samples: samples)
+        }.value
+
         // Paste the text
         await MainActor.run {
             phase = .done(processedText)
@@ -384,7 +390,8 @@ final class AppState {
                 rawASR: rawASRForLog,
                 polished: polishedForLog,
                 targetApp: previousApp?.bundleIdentifier,
-                audioDurationS: audioDurationS
+                audioDurationS: audioDurationS,
+                audioFile: audioFile
             )
         }
 
