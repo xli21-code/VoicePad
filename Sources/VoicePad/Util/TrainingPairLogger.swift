@@ -20,17 +20,19 @@ enum TrainingPairLogger {
         let target_app: String?
         let audio_duration_s: Double
         let audio_file: String?
+        let asr_engine: String?
     }
 
     /// Best-effort append of one pair. Never throws, never blocks on network (there is none).
-    static func log(rawASR: String, polished: String?, targetApp: String?, audioDurationS: Double, audioFile: String? = nil) {
+    static func log(rawASR: String, polished: String?, targetApp: String?, audioDurationS: Double, audioFile: String? = nil, asrEngine: String? = nil) {
         let pair = Pair(
             ts: ISO8601DateFormatter().string(from: Date()),
             raw_asr: rawASR,
             polished: polished,
             target_app: targetApp,
             audio_duration_s: audioDurationS,
-            audio_file: audioFile
+            audio_file: audioFile,
+            asr_engine: asrEngine
         )
 
         do {

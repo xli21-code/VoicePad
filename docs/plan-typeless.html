@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 02:30",
+  updated: "2026-11-10 04:10",
   range: { start: "2026-11-09", end: "2026-11-25" },
   today: "2026-11-09",
   phases: [
@@ -213,8 +213,8 @@ const PLAN = {
     { id: "T11", phase: "P2", title: "输出守护", note: "禁答题 + 长度比例检查，防改写跑偏", start: "2026-11-15", end: "2026-11-16", status: "planned" },
     { id: "M2", phase: "P2", milestone: true, title: "上下文改写上线", start: "2026-11-16", end: "2026-11-16" },
 
-    { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "SenseVoice 保留为后备", start: "2026-11-11", end: "2026-11-13", status: "planned" },
-    { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "Whisper+术语prompt 胜出：CER 12.2% / 术语 83%", start: "2026-11-10", end: "2026-11-10", status: "done" },
+    { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "已装；ANE 会卡死，改 cpuAndGPU 后 17s 加载", start: "2026-11-10", end: "2026-11-10", status: "done" },
+    { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "turbo+prompt 胜出：CER 13.5% / 术语 87%；large-v3 RTF≈1.0 出局", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T20", phase: "P3", title: "术语 prompt + 繁简归一", note: "prompt 定型：短标点提示+术语表 CER 13.5%/术语 87%", start: "2026-11-11", end: "2026-11-13", status: "planned" },
     { id: "M3", phase: "P3", milestone: true, title: "术语不再崩坏", start: "2026-11-13", end: "2026-11-13" },
 

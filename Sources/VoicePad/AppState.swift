@@ -29,6 +29,8 @@ final class AppState {
 
     private let audioEngine = AudioEngine()
     private var recognizer: SherpaRecognizer?
+    /// Primary engine; `recognizer` (SenseVoice) is the fallback.
+    private let whisperEngine = WhisperKitEngine()
     private let hotkeyMonitor = HotkeyMonitor()
     private let textInserter = TextInserter()
     private let modelManager = ModelManager()
@@ -80,6 +82,9 @@ final class AppState {
         translationEnabled = UserDefaults.standard.bool(forKey: "translationEnabled")
         polishEnabled = UserDefaults.standard.bool(forKey: "polishEnabled")
         audioEngine.prepare()
+        // Loads off the main actor; dictation falls back to SenseVoice until it is ready.
+        let engine = whisperEngine
+        Task.detached(priority: .utility) { await engine.prepare() }
         setupHotkey()
         resetIdleTimer()
     }
@@ -285,8 +290,33 @@ final class AppState {
 
     // MARK: - Transcription & Paste
 
+    private struct EngineResult {
+        let transcript: TranscriptResult
+        let engine: String
+    }
+
+    /// Primary engine first, SenseVoice second. A silent fallback here is deliberate:
+    /// the Whisper model may still be downloading, and a failed Whisper decode must
+    /// never cost the user their dictation.
+    private func transcribeWithBestEngine(samples: [Float]) async -> EngineResult? {
+        let prompt = ASRPrompt.build(vocabulary: VocabularyStore.shared.load().terms)
+
+        if whisperEngine.isReady,
+           let transcript = await whisperEngine.transcribe(samples: samples, prompt: prompt) {
+            return EngineResult(transcript: transcript, engine: whisperEngine.name)
+        }
+        if !whisperEngine.isReady {
+            vpLog("[AppState] Whisper not ready yet, falling back to SenseVoice")
+        }
+
+        if let recognizer, let transcript = await recognizer.transcribe(samples: samples, prompt: nil) {
+            return EngineResult(transcript: transcript, engine: "SenseVoice")
+        }
+        return nil
+    }
+
     private func transcribeAndPaste(samples: [Float]) async {
-        guard let recognizer else {
+        guard recognizer != nil else {
             await MainActor.run {
                 phase = .error("Recognizer not ready")
                 updateOverlay()
@@ -295,12 +325,10 @@ final class AppState {
             return
         }
 
-        // Offline transcription (more accurate than streaming)
         vpLog("[AppState] transcribing \(samples.count) samples...")
-        let result = recognizer.transcribe(samples: samples)
-        vpLog("[AppState] transcription result: '\(result.text)' lang=\(result.language ?? "nil")")
+        let result = await transcribeWithBestEngine(samples: samples)
 
-        guard !result.text.isEmpty else {
+        guard let result else {
             await MainActor.run {
                 phase = .error("No speech detected")
                 updateOverlay()
@@ -308,13 +336,14 @@ final class AppState {
             scheduleIdleReset(after: 2)
             return
         }
+        vpLog("[AppState] transcription result (\(result.engine)): '\(result.transcript.text)' lang=\(result.transcript.language ?? "nil")")
 
-        var processedText = textProcessor.process(result.text)
+        var processedText = textProcessor.process(result.transcript.text)
 
         // Captured for the raw/polished training-pair log (see TrainingPairLogger).
         // rawASR stays the untouched SenseVoice output; polishedForLog is set only
         // when polish actually ran and succeeded.
-        let rawASRForLog = result.text
+        let rawASRForLog = result.transcript.text
         var polishedForLog: String?
 
         // LLM polish if enabled
@@ -365,7 +394,7 @@ final class AppState {
         let audioDurationS = Double(samples.count) / 16000.0
         let entry = TranscriptEntry(
             text: processedText,
-            language: result.language,
+            language: result.transcript.language,
             duration: audioDurationS
         )
         historyStore.append(entry)
@@ -391,7 +420,8 @@ final class AppState {
                 polished: polishedForLog,
                 targetApp: previousApp?.bundleIdentifier,
                 audioDurationS: audioDurationS,
-                audioFile: audioFile
+                audioFile: audioFile,
+                asrEngine: result.engine
             )
         }
 
