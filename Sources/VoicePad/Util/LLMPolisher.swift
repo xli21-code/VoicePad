@@ -12,17 +12,12 @@ struct VoicePadConfig {
     /// Model used for vocabulary import; falls back to the polish model.
     let importModel: String
 
-    static let defaultBaseURL = "https://api.anthropic.com"
-    static let defaultModel = "claude-sonnet-4-5-20241022"
-
-    /// Available Claude models for the dropdown picker.
-    static let availableModels: [(id: String, label: String)] = [
-        ("claude-sonnet-4-5-20241022", "Claude Sonnet 4.5"),
-        ("claude-sonnet-4-20250514", "Claude Sonnet 4"),
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6"),
-        ("claude-opus-4-6", "Claude Opus 4.6"),
-        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
-    ]
+    /// Defaults point at the local gateway this project actually runs on. Any
+    /// OpenAI-compatible or Anthropic-compatible endpoint can replace it in Settings.
+    static let defaultBaseURL = "http://127.0.0.1:3425"
+    /// No model is shipped as a default. The gateway publishes its own list and a made-up
+    /// id only buys a 400 from the provider, so an unconfigured role fails loudly instead.
+    static let defaultModel = ""
 
     /// Local gateways (e.g. Magpie on 127.0.0.1:3425) do not require an API key.
     static func isLocalHost(_ urlString: String) -> Bool {
@@ -589,6 +584,10 @@ final class LLMPolisher {
     }
 
     private func callLLM(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024, lengthReference: String? = nil) async throws -> String {
+        guard !model.isEmpty else {
+            vpLog("[LLMPolisher] no model configured for this role; skipping the call")
+            throw PolishError.apiError(0, "No model configured")
+        }
         let input = lengthReference ?? userText ?? prompt ?? ""
         // Prompt→answer calls must not be judged by output/input length ratio.
         let checkLength = (userText != nil || lengthReference != nil)

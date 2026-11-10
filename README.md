@@ -2,7 +2,7 @@
 
 macOS 原生语音转文字菜单栏应用。按住热键说话，松开后文字自动粘贴到光标位置。
 
-离线 ASR（SenseVoice），可选 LLM 润色/翻译（Claude API）。
+离线 ASR（Whisper turbo 主 / SenseVoice 备），可选 LLM 润色/翻译（任何 OpenAI 或 Anthropic 兼容端点，默认指向本机网关）。
 
 ## 部署步骤（全新机器）
 
@@ -52,23 +52,27 @@ open /Applications/VoicePad.app
 
 ### 5. ASR 模型
 
-首次启动时自动从 GitHub 下载 SenseVoice 模型（~200MB）到 `~/.voicepad/models/`。app 会自动读取系统代理设置。
+首次启动时自动下载两套 ASR 模型：Whisper large-v3-turbo（WhisperKit，~1.5GB，主力）与 SenseVoice（~200MB，兜底）。app 会自动读取系统代理设置。
 
 ### 6. LLM 润色（可选）
 
 点击菜单栏图标 → Settings → API tab，配置：
-- API Key（支持 Anthropic API 或兼容中转站）
-- Base URL（默认 `https://api.anthropic.com`）
-- Model（默认 `claude-sonnet-4-20250514`）
+- Base URL（默认 `http://127.0.0.1:3425`，本机网关；任意 OpenAI / Anthropic 兼容端点都行）
+- API Key（本地网关可留空）
+- Model（从网关的 `/v1/models` 列表里选，不预置任何模型名）
 
-或者直接编辑 `~/.voicepad/config.json`：
+或者直接编辑 `~/.voicepad/config.json`（v2 结构，润色 / 翻译 / 词表导入可各用一个模型）：
 ```json
 {
-  "anthropic_api_key": "sk-...",
-  "api_base_url": "https://api.anthropic.com",
-  "model": "claude-sonnet-4-20250514"
+  "provider": { "base_url": "http://127.0.0.1:3425", "api_key": "" },
+  "models": {
+    "polish": "ollama-cloud/gemma4:31b",
+    "translate": "ollama-cloud/deepseek-v4.1-flash:1017",
+    "import": "ollama-cloud/gemma4:31b"
+  }
 }
 ```
+旧的 `anthropic_api_key` / `api_base_url` / `model` 三个键仍然能读，用来接 Anthropic 官方 API。
 
 ## 使用
 
@@ -114,7 +118,7 @@ VoicePad/
 │   ├── Input/HotkeyMonitor.swift # 全局热键（keyCode 检测 + chord rejection）
 │   ├── Models/ModelManager.swift # ASR 模型下载管理
 │   ├── Util/
-│   │   ├── LLMPolisher.swift     # Claude API 润色/翻译
+│   │   ├── LLMPolisher.swift     # LLM 润色/翻译（OpenAI / Anthropic 两种线上格式）
 │   │   ├── TextProcessor.swift   # 文本后处理 + 纠错
 │   │   ├── VocabularyStore.swift # 用户词典
 │   │   └── CorrectionLearner.swift # 自动纠错学习
@@ -144,8 +148,8 @@ VoicePad/
 |----|------|
 | 语言 | Swift 5.9 |
 | UI | AppKit（NSPanel + NSStatusBar） |
-| ASR | SenseVoice via sherpa-onnx（C bridge） |
-| LLM | Claude API（可选） |
+| ASR | Whisper turbo via WhisperKit（主）/ SenseVoice via sherpa-onnx（备） |
+| LLM | OpenAI 兼容 / Anthropic 兼容端点（可选） |
 | 存储 | GRDB / SQLite（FTS5 全文搜索） |
 | 音频 | AVAudioEngine（16kHz mono Float32） |
 

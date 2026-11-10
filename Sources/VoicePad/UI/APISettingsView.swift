@@ -62,7 +62,7 @@ struct APISettingsView: View {
             Section {
                 LabeledContent("API Key") {
                     HStack(spacing: 6) {
-                        SecureField("sk-ant-...", text: $apiKey)
+                        SecureField("sk-... (optional for a local gateway)", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
                         Button {
                             if let str = NSPasteboard.general.string(forType: .string) {
@@ -77,7 +77,7 @@ struct APISettingsView: View {
 
                 LabeledContent("Base URL") {
                     HStack(spacing: 6) {
-                        TextField("https://api.anthropic.com (default)", text: $baseURL)
+                        TextField("http://127.0.0.1:3425 (local gateway)", text: $baseURL)
                             .textFieldStyle(.roundedBorder)
                         Button("Detect Magpie") {
                             baseURL = "http://127.0.0.1:3425"

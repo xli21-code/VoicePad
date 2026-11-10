@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 04:12",
+  updated: "2026-11-10 04:25",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -209,6 +209,7 @@ const PLAN = {
     { id: "T5", phase: "P1", title: "/v1/models 全量 picker", note: "60 模型；已做成 润色/翻译/导入 三行各选各的", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T6", phase: "P1", title: "空输出 / 过短 / 回声判失败", note: "已落地；双候选竞速仍推迟", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-09", end: "2026-11-09" },
+    { id: "T32", phase: "P1", title: "默认值与文案去 Claude 化", note: "默认指本机网关、不再预置模型名；空模型在发请求前显式失败；README/Settings/技术栈对齐", start: "2026-11-10", end: "2026-11-10", status: "done" },
 
     { id: "T8", phase: "P2", title: "AX 读取层", note: "TextEdit 通(选区+前文)；Chrome/Herdr 零暴露", start: "2026-11-10", end: "2026-11-10", status: "doing" },
     { id: "T10", phase: "P2", title: "prompt v2", note: "界面信息分区；选区=改写指令；保语言", start: "2026-11-10", end: "2026-11-10", status: "done" },
@@ -217,7 +218,7 @@ const PLAN = {
 
     { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "已装；ANE 会卡死，改 cpuAndGPU 后 17s 加载", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "turbo+prompt 胜出：CER 13.5% / 术语 87%；large-v3 RTF≈1.0 出局", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "T20", phase: "P3", title: "繁简归一（术语 prompt 已完成）", note: "Whisper 偶吐繁体，靠 prompt 压着，缺确定性兜底", start: "2026-11-11", end: "2026-11-11", status: "planned" },
+    { id: "T20", phase: "P3", title: "繁简归一", note: "ICU Traditional-Simplified，短语感知（著名/看著 不乱改）；7 条单测；放在改写之前", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "M3", phase: "P3", milestone: true, title: "术语不再崩坏", start: "2026-11-13", end: "2026-11-13" },
 
     { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "剪贴板+Cmd+V 仍是唯一通用路径；AXValue 只用在纠错替换上", start: "2026-11-14", end: "2026-11-17", status: "planned" },
@@ -246,7 +247,7 @@ const PLAN = {
     { id: "B3", title: "Apple Speech 中英混说表现未知", desc: "它支持中文/粤语，但「大量英文术语夹在中文句子里」是否把术语转成汉字，只有对照集能回答。", owner: "我", tag: "待验证", level: "grey" },
     { id: "B4", title: "SenseVoice 当前加载的是 937MB 浮点模型", desc: "盘上同时有 model.onnx 与 model.int8.onnx，代码取前者。内存与解码时延可能白付 4 倍。", owner: "我", tag: "小", level: "grey" },
     { id: "B7", title: "没有 macOS 26 SDK，Apple SpeechTranscriber 编不了", desc: "本机只有 CLT 15.5 SDK（无 Xcode 26）。横评已改走 WhisperKit，本条降级为「若将来装 Xcode 26 再评估」。", owner: "你", tag: "已绕过", level: "grey" },
-    { id: "B9", title: "Whisper 输出无标点、偶发繁体", desc: "横评实测：所有输出无标点，第 11 句整句繁体，一条短片被翻成英文。需要确定性繁→简补丁 + 改写层补标点，不能指望 ASR。", owner: "我", tag: "P3 内解决", level: "grey" },
+    { id: "B9", title: "Whisper 输出无标点、偶发繁体", desc: "横评实测：所有输出无标点，第 11 句整句繁体，一条短片被翻成英文。繁→简已由 T20 确定性兜底；标点仍交给改写层；「被翻成英文」尚无门。", owner: "我", tag: "半解", level: "grey" },
     { id: "B8", title: "xl3049 中转的模型全挂了", desc: "改写因此被关掉。现已把 provider 切到 Magpie（deepseek-flash，0.86s），config 备份在 config.json.bak-20261109。", owner: "已处理", tag: "已恢复", level: "grey" },
     { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。P1 结束前先抽 DictationPipeline，否则每条分支合并都要手工解冲突。目前下面那张分支表一条分支都还没开，全部工作直推 main。", owner: "我", tag: "结构性", level: "red" },
   ],

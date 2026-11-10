@@ -63,6 +63,18 @@ struct LLMPolisherTests {
         #expect(config.importModel == "local/polish")
     }
 
+    @Test("An empty config yields no model rather than an invented one")
+    func noModelIsNotInvented() {
+        // The gateway publishes its own model list; shipping a hardcoded id here only
+        // guaranteed a 400 on any machine that did not happen to have that model.
+        let config = VoicePadConfig.resolve(json: [:])
+
+        #expect(config.baseURL == "http://127.0.0.1:3425")
+        #expect(config.model.isEmpty)
+        #expect(config.translateModel.isEmpty)
+        #expect(config.importModel.isEmpty)
+    }
+
     // MARK: - Local gateway key handling
 
     @Test("Local hosts are recognized")
