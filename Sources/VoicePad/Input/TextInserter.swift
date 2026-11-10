@@ -38,6 +38,29 @@ final class TextInserter {
         return result == .success
     }
 
+    /// Put the caret right after the pasted replacement. Some apps keep the pasted text
+    /// selected, and a leftover selection would turn the next dictation into an edit.
+    private func moveCaret(to location: Int, in app: NSRunningApplication) {
+        guard AXIsProcessTrusted() else { return }
+        let appRef = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appRef, 0.3)
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let raw = focusedRef, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return }
+        let element = raw as! AXUIElement
+
+        // Clamp to the field's current length: the paste has already changed it.
+        var valueRef: CFTypeRef?
+        var length = location
+        if AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
+           let value = valueRef as? String {
+            length = (value as NSString).length
+        }
+        var cfRange = CFRange(location: min(location, max(0, length)), length: 0)
+        guard let axRange = AXValueCreate(.cfRange, &cfRange) else { return }
+        AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange)
+    }
+
     /// Paste text by writing to clipboard and simulating Cmd+V, then restore clipboard.
     /// `replaceRange` re-selects the text captured at key-down so the paste overwrites it.
     func paste(_ text: String, to app: NSRunningApplication?, replaceRange: (range: NSRange, expected: String)? = nil) {
@@ -70,6 +93,13 @@ final class TextInserter {
                 }
                 vpLog("[TextInserter] simulating Cmd+V")
                 self.simulatePaste()
+
+                if let replaceRange {
+                    let caret = replaceRange.range.location + text.count
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                        self.moveCaret(to: caret, in: app)
+                    }
+                }
 
                 // 4. Restore clipboard after paste completes
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {

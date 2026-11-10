@@ -364,7 +364,8 @@ final class LLMPolisher {
         // A selection changes the job: the utterance is an instruction about that text,
         // not material to clean up. Mixing the two rule sets made the model "polish" the
         // instruction itself and paste it over the selection.
-        if let context, context.hasSelection, let selected = context.selectedText, !selected.isEmpty {
+        if let context, let selected = context.selectedText,
+           Self.isEditRequest(selection: selected, instruction: text) {
             return await edit(instruction: text, original: selected, config: config, apiKey: apiKey,
                               dictionaryTerms: dictionaryTerms)
         }
@@ -381,6 +382,19 @@ final class LLMPolisher {
             vpLog("[LLMPolisher] error: \(error)")
             return nil
         }
+    }
+
+    /// A selection only means "edit this" when it is real text and the utterance is short
+    /// enough to be an instruction about it. A stray one-character selection (which apps
+    /// leave behind after a paste) must not hijack a normal dictation: the user would speak
+    /// a sentence, see nothing appear, and get "改写失败" instead.
+    static func isEditRequest(selection: String?, instruction: String) -> Bool {
+        guard let selection else { return false }
+        let text = selection.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard text.count >= 2 else { return false }
+        let trimmed = instruction.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        return trimmed.count <= text.count * 6 + 30
     }
 
     /// Rewrites the selected text according to what the speaker said.

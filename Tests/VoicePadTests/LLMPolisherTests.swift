@@ -155,3 +155,24 @@ struct SelectionEditGuardTests {
         #expect(LLMPolisher.isEchoOfInstruction("改得再客气一点", instruction: "改得再客气一点。", original: original))
     }
 }
+
+@Suite("Edit intent check")
+struct EditIntentTests {
+    @Test("A real two-or-more character selection with a short instruction is an edit")
+    func realEdit() {
+        #expect(LLMPolisher.isEditRequest(selection: "这个方案不行", instruction: "改得再客气一点"))
+    }
+
+    @Test("A stray one-character selection does not hijack dictation")
+    func straySelection() {
+        #expect(!LLMPolisher.isEditRequest(selection: "我", instruction: "这个方案不行,我不同意,明天再讨论。"))
+        #expect(!LLMPolisher.isEditRequest(selection: " ", instruction: "明天上午十点开会"))
+        #expect(!LLMPolisher.isEditRequest(selection: nil, instruction: "明天上午十点开会"))
+    }
+
+    @Test("A long dictation is not treated as an instruction about a short selection")
+    func longUtterance() {
+        let long = String(repeating: "这是一段正常的口述内容，", count: 8)
+        #expect(!LLMPolisher.isEditRequest(selection: "方案", instruction: long))
+    }
+}

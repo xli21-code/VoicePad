@@ -405,7 +405,9 @@ final class AppState {
 
         // Edit mode failed: leave the selected text untouched. Pasting the instruction over it
         // would be worse than doing nothing.
-        if polishEnabled, dictationContext?.hasSelection == true, polishedForLog == nil {
+        let editMode = LLMPolisher.isEditRequest(selection: dictationContext?.selectedText,
+                                                 instruction: result.transcript.text)
+        if polishEnabled, editMode, polishedForLog == nil {
             vpLog("[AppState] edit failed, original text left untouched")
             await MainActor.run {
                 phase = .error("改写失败，原文未改动")
