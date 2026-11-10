@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 04:35",
+  updated: "2026-11-10 04:50",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -212,6 +212,7 @@ const PLAN = {
     { id: "T32", phase: "P1", title: "默认值与文案去 Claude 化", note: "默认指本机网关、不再预置模型名；空模型在发请求前显式失败；README/Settings/技术栈对齐", start: "2026-11-10", end: "2026-11-10", status: "done" },
 
     { id: "T8", phase: "P2", title: "AX 读取层", note: "TextEdit 通(选区+前文)；Chrome/Herdr 零暴露", start: "2026-11-10", end: "2026-11-10", status: "doing" },
+    { id: "T34", phase: "P2", title: "prompt 五段骨架 + 结构化 context", note: "输入/任务/边界/输出契约/自检；界面信息改成 应用/bundle id/窗口/输入框类型 四个字段；regress 六 gate 全 PASS（术语 84%、掉内容 0）", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T10", phase: "P2", title: "prompt v2", note: "界面信息分区；选区=改写指令；保语言", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T11", phase: "P2", title: "输出守护", note: "禁助手开场白 + 长度比例 + 空输出", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "M2", phase: "P2", milestone: true, title: "原生 app 内上下文改写 + 选区改写", start: "2026-11-10", end: "2026-11-10" },

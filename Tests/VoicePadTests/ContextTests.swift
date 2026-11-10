@@ -52,11 +52,13 @@ struct ContextTests {
     @Test("Context block treats a selection as an edit instruction")
     func selectionMeansEdit() {
         let context = DictationContext(appName: "Slack", bundleID: "com.tinyspeck.slackmacgap",
-                                       role: "AXTextArea", source: "focused", selectedText: "这个方案不行",
+                                       windowTitle: "general — Slack", role: "AXTextArea", source: "focused", selectedText: "这个方案不行",
                                        textBeforeCursor: nil, textAfterCursor: nil, selectedRange: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("Slack"))
         #expect(block.contains("AXTextArea"))
+        #expect(block.contains("com.tinyspeck.slackmacgap"))
+        #expect(block.contains("general — Slack"))
         #expect(block.contains("要修改的原文"))
         #expect(block.contains("这个方案不行"))
         #expect(!block.contains("光标前文"))
@@ -65,7 +67,7 @@ struct ContextTests {
     @Test("Context block passes surrounding text without asking for a continuation")
     func beforeCursorOnly() {
         let context = DictationContext(appName: "Notes", bundleID: "com.apple.Notes",
-                                       role: "AXTextArea", source: "focused", selectedText: nil,
+                                       windowTitle: nil, role: "AXTextArea", source: "focused", selectedText: nil,
                                        textBeforeCursor: "上周的复盘是这样的：", textAfterCursor: nil, selectedRange: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("光标前文"))

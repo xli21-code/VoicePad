@@ -9,6 +9,9 @@ import ApplicationServices
 struct DictationContext {
     let appName: String?
     let bundleID: String?
+    /// Window title. For browsers this is the page title, which is a better signal of what
+    /// the user is writing than the app name alone.
+    let windowTitle: String?
     let role: String?
     /// How the element was found (focused / window / tree / systemwide), for debugging.
     let source: String?
@@ -22,8 +25,8 @@ struct DictationContext {
 
     var hasSelection: Bool { !(selectedText?.isEmpty ?? true) }
 
-    static let empty = DictationContext(appName: nil, bundleID: nil, role: nil, source: nil,
-                                        selectedText: nil, textBeforeCursor: nil,
+    static let empty = DictationContext(appName: nil, bundleID: nil, windowTitle: nil, role: nil,
+                                        source: nil, selectedText: nil, textBeforeCursor: nil,
                                         textAfterCursor: nil, selectedRange: nil)
 }
 
@@ -85,6 +88,7 @@ enum ContextReader {
         return DictationContext(
             appName: app.localizedName,
             bundleID: app.bundleIdentifier,
+            windowTitle: windowTitle(of: appElement),
             role: role,
             source: source,
             selectedText: info.selected.map { clip($0, maxSelected) },
@@ -92,6 +96,15 @@ enum ContextReader {
             textAfterCursor: info.after,
             selectedRange: info.range
         )
+    }
+
+    /// The focused window's title. One attribute read on a window we already resolve;
+    /// nil when the window exposes none.
+    private static func windowTitle(of appElement: AXUIElement) -> String? {
+        guard let window = element(appElement, kAXFocusedWindowAttribute) else { return nil }
+        guard let title = string(window, kAXTitleAttribute) else { return nil }
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
     }
 
     // MARK: - Element resolution
