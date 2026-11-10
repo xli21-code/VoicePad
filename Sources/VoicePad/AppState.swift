@@ -40,6 +40,7 @@ final class AppState {
     private let correctionLearner = CorrectionLearner()
     private var recordingTimer: Timer?
     private var previousApp: NSRunningApplication?
+    private let contextHolder = ContextHolder()
     private let maxRecordingDuration: TimeInterval = 90
     private var idleTimer: Timer?
     private let sleepAfterIdleDuration: TimeInterval = 30 * 60 // 30 minutes
@@ -209,6 +210,11 @@ final class AppState {
         // Remember which app the user is typing in
         previousApp = NSWorkspace.shared.frontmostApplication
 
+        // Read the focused field off the main thread; it is only needed after transcription.
+        contextHolder.set(nil)
+        let holder = contextHolder
+        Task.detached(priority: .userInitiated) { holder.set(ContextReader.read()) }
+
         recordingDuration = 0
         audioLevels = []
         polishFailed = false
@@ -361,10 +367,16 @@ final class AppState {
                 AppBranchStore.shared.resolve(bundleID: app.bundleIdentifier ?? "")?.stylePrompt
             }
 
+            let context = contextHolder.take()
+            if let context {
+                vpLog("[AppState] context: app=\(context.appName ?? "-") role=\(context.role ?? "-") selection=\(context.hasSelection) before=\(context.textBeforeCursor?.count ?? 0)ch")
+            }
+
             if let polished = await llmPolisher.polish(
                 processedText,
                 dictionaryTerms: dictionaryTerms,
-                appBranchPrompt: branchPrompt
+                appBranchPrompt: branchPrompt,
+                context: context
             ) {
                 polishedForLog = polished
                 processedText = polished

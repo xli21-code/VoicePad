@@ -353,14 +353,17 @@ final class LLMPolisher {
 
     /// Polish raw transcription into structured text via Claude API.
     /// Returns the polished text, or nil if polishing fails.
-    func polish(_ text: String, dictionaryTerms: [String] = [], appBranchPrompt: String? = nil) async -> String? {
+    func polish(_ text: String, dictionaryTerms: [String] = [], appBranchPrompt: String? = nil,
+                context: DictationContext? = nil) async -> String? {
         let config = loadConfig()
         guard let apiKey = config.effectiveAPIKey else {
             vpLog("[LLMPolisher] No API key found")
             return nil
         }
 
-        let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms, appBranchPrompt: appBranchPrompt)
+        let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms,
+                                             appBranchPrompt: appBranchPrompt,
+                                             context: context)
 
         do {
             let result = try await callLLM(config: config, apiKey: apiKey, model: config.model, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
@@ -406,7 +409,8 @@ final class LLMPolisher {
 
     // MARK: - Prompt Building
 
-    private func buildSystemPrompt(dictionaryTerms: [String], appBranchPrompt: String?) -> String {
+    private func buildSystemPrompt(dictionaryTerms: [String], appBranchPrompt: String?,
+                                  context: DictationContext? = nil) -> String {
         var parts: [String] = []
 
         parts.append("""
@@ -444,7 +448,39 @@ final class LLMPolisher {
             parts.append("上下文风格要求：\(branchPrompt)")
         }
 
+        if let context {
+            parts.append(Self.contextBlock(context))
+        }
+
         return parts.joined(separator: "\n\n")
+    }
+
+    /// The field the user was in, and the text around the caret. Kept separate from the rules
+    /// above because it changes per dictation and must not be confused with instructions.
+    static func contextBlock(_ context: DictationContext) -> String {
+        var lines: [String] = ["以下是用户口述时所处的界面信息，只用于选择措辞与格式，不要复述、不要回答："]
+
+        if let app = context.appName { lines.append("- 应用：\(app)") }
+        if let role = context.role { lines.append("- 输入框类型：\(role)") }
+
+        if context.hasSelection, let selected = context.selectedText {
+            lines.append("""
+            - 用户选中了一段文字，并且正在对它下指令。请把它当作「要修改的原文」：
+              按用户口述的要求改写这段文字，输出改写后的完整文本（不是回答，不是解释）。
+            【选中文本开始】
+            \(selected)
+            【选中文本结束】
+            """)
+        } else if let before = context.textBeforeCursor, !before.isEmpty {
+            lines.append("""
+            - 光标前已有的文字（用于衔接与格式一致，绝对不要重复它、不要续写它）：
+            【光标前文开始】
+            \(before)
+            【光标前文结束】
+            """)
+        }
+
+        return lines.joined(separator: "\n") + "\n\n（如果你判断这段界面信息和本次口述无关，就忽略它。）"
     }
 
     // MARK: - LLM API (Anthropic + OpenAI compatible)
@@ -453,9 +489,20 @@ final class LLMPolisher {
     /// otherwise a reasoning model likely burned the token budget and returned nothing.
     /// `checkLength` is false for prompt→answer calls (vocabulary import), where the answer is
     /// legitimately much shorter than the prompt and only emptiness signals a burnt budget.
+    /// Openers that mean the model answered instead of rewriting.
+    private static let assistantPreambles = [
+        "好的", "当然", "以下是", "这里是", "整理后", "修改后", "为你", "Sure", "Here is", "Here's",
+    ]
+
     static func isUsableOutput(_ output: String, for input: String, checkLength: Bool = true) -> Bool {
         let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+
+        // A rewrite never starts by addressing the user — that is a chat reply leaking through.
+        let inputStart = String(input.trimmingCharacters(in: .whitespacesAndNewlines).prefix(6))
+        for preamble in assistantPreambles where trimmed.hasPrefix(preamble) && !inputStart.hasPrefix(preamble) {
+            return false
+        }
         guard checkLength else { return true }
         let inputCount = input.trimmingCharacters(in: .whitespacesAndNewlines).count
         guard inputCount > 0 else { return true }
