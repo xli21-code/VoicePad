@@ -53,9 +53,15 @@ struct OutputContractTests {
         #expect(section.contains("不要补句号"))
     }
 
-    @Test("Neutral matches the chat contract, so unknown apps behave as before")
-    func neutralIsUnchanged() {
-        #expect(OutputContract.neutral.promptSection == OutputContract.chat.promptSection)
-        #expect(OutputContract.neutral.promptSection.contains("不加标题、列表符号"))
+    @Test("Chat may regroup but not reword, and neutral stays the strict one")
+    func chatOrganisesNeutralDoesNot() {
+        let chat = OutputContract.chat.promptSection
+        #expect(chat.contains("最多 3 段"))
+        #expect(chat.contains("不改动用词"))
+        #expect(chat.contains("宁可啰嗦"))
+
+        let neutral = OutputContract.neutral.promptSection
+        #expect(neutral.contains("不加标题、列表符号"))
+        #expect(!neutral.contains("最多 3 段"))
     }
 }

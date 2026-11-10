@@ -34,13 +34,42 @@ import urllib.request
 HOME = os.path.expanduser("~")
 CONFIG = HOME + "/.voicepad/config.json"
 PAIRS = HOME + "/.voicepad/pairs.jsonl"
-BASELINE = HOME + "/.voicepad/eval/regress_baseline.json"
+BASELINE_DIR = HOME + "/.voicepad/eval"
+
+
+def baseline_path(contract: str) -> str:
+    """One baseline per output contract: a different contract is a different prompt."""
+    name = "regress_baseline.json" if contract == "neutral" else f"regress_baseline_{contract}.json"
+    return os.path.join(BASELINE_DIR, name)
 
 PUNCT = "，。！？、,.!?;；：: \t\n\r（）()《》“”\"'’‘-—…"
 LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.、)]|#{1,6}\s)", re.M)
 # When the speaker retracts themselves, deleting the retracted part is the correct
 # behaviour, not content loss. Only unmarked deletion is suspicious.
-CORRECTION = re.compile(r"不对|我是说|应该说|改成|换成|重说|说错了")
+CORRECTION = re.compile(r"不对|我是说|应该说|改成|换成|重说|说错了|算了|当我没说|没有或者")
+NUMBER = re.compile(r"\d+(?:[.,]\d+)?%?")
+# Words that carry the meaning of a sentence. Losing one is not a style choice.
+NEGATIONS = "不没别未无非"
+# "五号六号" and "5号6号" are the same fact; comparing digits to Chinese numerals produced
+# false positives, so number checks are skipped for utterances that use the latter.
+CN_NUMERALS = "零一二三四五六七八九十百千万"
+# Organise contracts may regroup, so the character-level "content kept" ratio stops being
+# a fair test; these count facts instead.
+PARAGRAPH = re.compile(r"\n\s*\n")
+BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.、)])\s", re.M)
+
+
+def facts(text):
+    """The parts of a dictation that must survive any amount of tidying.
+
+    Numbers and negations only. Latin terms were tried and dropped: ASR spelling fixes
+    (benchch → benchmark, sense voiceice → SenseVoice) look like losses to a token
+    comparison, so term survival is measured separately by the term-rate metric.
+    """
+    return {
+        "numbers": {n.rstrip("%") for n in NUMBER.findall(text)},
+        "negations": {c for c in NEGATIONS if c in text},
+    }
 
 
 def squash(s: str) -> str:
@@ -171,6 +200,17 @@ def evaluate(items, cfg, prompt, price=None):
         # contentless answer is a failure.
         failed = not s_out
         content_keep = lcs_len(s_out, s_in) / len(s_in) if s_in else 1.0
+        fin, fout = facts(raw), facts(out)
+        # Chinese numerals and Arabic digits are the same fact; rather than convert them,
+        # the number comparison is skipped for utterances that use Chinese numerals. It has
+        # to be skipped in both directions, otherwise the digits in the output look new.
+        comparable = not any(c in CN_NUMERALS for c in raw)
+        # A self-correction is supposed to delete what it retracts, so the check is skipped
+        # for those utterances — otherwise the metric punishes the correct behaviour.
+        kept_numbers = set() if not comparable else fin["numbers"] - fout["numbers"]
+        lost = [] if CORRECTION.search(raw) else sorted(
+            kept_numbers | (fin["negations"] - fout["negations"]))
+        new_numbers = sorted(fout["numbers"] - fin["numbers"]) if comparable else []
         rows.append({
             "raw": raw,
             "out": out,
@@ -185,6 +225,10 @@ def evaluate(items, cfg, prompt, price=None):
             "term_hits": term_hits,
             "fillers": filler_count(out),
             "structure_added": bool(LIST_MARK.search(out)) and not LIST_MARK.search(raw),
+            "facts_lost": lost,
+            "new_numbers": new_numbers,
+            "paragraphs": len([p for p in PARAGRAPH.split(out) if p.strip()]),
+            "bullets": len(BULLET.findall(out)),
             "tokens_in": fresh_in + cached_in,
             "tokens_out": out_tokens,
             "cost": cost,
@@ -213,6 +257,11 @@ def summarize(rows):
         "term_rate": round(hits / terms, 3) if terms else 1.0,
         "fillers_left": sum(r.get("fillers", 0) for r in rows),
         "structure_added": sum(1 for r in rows if r.get("structure_added")),
+        "facts_lost": sum(1 for r in rows if r.get("facts_lost")),
+        "new_numbers": sum(len(r.get("new_numbers") or []) for r in rows),
+        # Only organise contracts may exceed this; a plain dictation should not become a list.
+        "over_structured": sum(1 for r in rows
+                               if (r.get("paragraphs") or 0) > 3 or (r.get("bullets") or 0) > 5),
         "tokens_in_p50": med(tin),
         "tokens_out_p50": med(tout),
         # Local ASR has no marginal dollar cost; this is the LLM leg only.
@@ -223,13 +272,28 @@ def summarize(rows):
     }
 
 
-def gates(cur, base):
+def gates(cur, base, contract="neutral"):
     checks = []
     checks.append(("失败率 ≤ 5%", cur["fail_rate"] <= 0.05, f"{cur['fail_rate']:.1%}"))
-    checks.append(("疑似掉内容 = 0（已排除自我纠正）", cur["content_lost"] == 0, str(cur["content_lost"])))
+    if contract == "chat":
+        # Regrouping breaks a character-level ratio without dropping anything, so the
+        # organise contract is held to facts instead: numbers, negations, terms.
+        checks.append(("事实不丢（数字/否定词，已排除自我纠正）", cur["facts_lost"] == 0,
+                       str(cur["facts_lost"])))
+        checks.append(("未过度结构化（段落 ≤3 / 条目 ≤5）", cur["over_structured"] == 0,
+                       str(cur["over_structured"])))
+    else:
+        checks.append(("疑似掉内容 = 0（已排除自我纠正）", cur["content_lost"] == 0, str(cur["content_lost"])))
+    # A number the speaker never said is a fabrication — but a model that "corrects" a
+    # garbled proper noun (千问3AR → Qwen2-Audio) can invent one, so the gate holds the
+    # count at the baseline instead of demanding zero.
+    if "new_numbers" in base:
+        checks.append(("编造数字不增加", cur["new_numbers"] <= base["new_numbers"],
+                       f"{cur['new_numbers']} vs {base['new_numbers']}"))
     checks.append(("术语保留不退化 (≥ baseline-5pp)", cur["term_rate"] >= base["term_rate"] - 0.05,
                    f"{cur['term_rate']:.0%} vs {base['term_rate']:.0%}"))
-    checks.append(("未擅自加结构化", cur["structure_added"] == 0, str(cur["structure_added"])))
+    if contract != "chat":
+        checks.append(("未擅自加结构化", cur["structure_added"] == 0, str(cur["structure_added"])))
     allowed = base["p50_ms"] * 1.5 + 200
     checks.append((f"p50 ≤ {allowed:.0f}ms", cur["p50_ms"] <= allowed, f"{cur['p50_ms']}ms"))
     # Cost moves for reasons quality metrics miss: a longer prompt, a chattier model, a
@@ -284,11 +348,12 @@ def main():
     cur.update({"model": cfg["model"], "prompt_sha": cfg["prompt_sha"], "contract": args.contract,
                 "priced": price is not None, "updated": time.strftime("%Y-%m-%d %H:%M")})
 
+    baseline = baseline_path(args.contract)
     base = None
-    if os.path.exists(BASELINE):
-        base = json.load(open(BASELINE, encoding="utf-8"))
+    if os.path.exists(baseline):
+        base = json.load(open(baseline, encoding="utf-8"))
 
-    checks = gates(cur, base) if base else []
+    checks = gates(cur, base, args.contract) if base else []
     if args.json:
         print(json.dumps({"current": cur, "baseline": base, "gates": checks,
                           "rows": rows}, ensure_ascii=False, indent=2))
@@ -299,6 +364,7 @@ def main():
         print(f"  失败 {cur['failures']}/{cur['items']}   原样返回 {cur['unchanged']}   掉内容 {cur['content_lost']}   "
               f"术语 {cur['term_hits']}/{cur['terms']} = {cur['term_rate']:.0%}")
         print(f"  残留填充词 {cur['fillers_left']}   擅自加结构 {cur['structure_added']}   "
+              f"事实丢失 {cur['facts_lost']}   编造数字 {cur['new_numbers']}   "
               f"p50 {cur['p50_ms']}ms  p90 {cur['p90_ms']}ms")
         if cur["cost_per_dictation_usd"] is None:
             print(f"  成本：未知（网关未给 {cur['model']} 报价）；"
@@ -321,9 +387,9 @@ def main():
                 print(f"  keep={r['content_keep']:.2f}  {r['raw'][:44]} → {r['out'][:44]}")
 
     if args.update_baseline:
-        os.makedirs(os.path.dirname(BASELINE), exist_ok=True)
-        json.dump(cur, open(BASELINE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-        print(f"\nbaseline 已更新：{BASELINE}")
+        os.makedirs(os.path.dirname(baseline), exist_ok=True)
+        json.dump(cur, open(baseline, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+        print(f"\nbaseline 已更新：{baseline}")
         return 0
 
     failed = [c for c in checks if not c[1]]
