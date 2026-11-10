@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 10:35",
+  updated: "2026-11-10 13:05",
   range: { start: "2026-11-09", end: "2026-11-25" },
   today: "2026-11-09",
   phases: [
@@ -208,10 +208,10 @@ const PLAN = {
     { id: "T6", phase: "P1", title: "空输出判失败（竞速未做）", note: "空/过短判失败已落地；双候选竞速推迟", start: "2026-11-10", end: "2026-11-10", status: "doing" },
     { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-09", end: "2026-11-09" },
 
-    { id: "T8", phase: "P2", title: "AX 读取层", note: "已做；但 Herdr 只暴露窗口、Chrome 无值 → 受限", start: "2026-11-10", end: "2026-11-10", status: "doing" },
+    { id: "T8", phase: "P2", title: "AX 读取层", note: "TextEdit 通(选区+前文)；Chrome/Herdr 零暴露", start: "2026-11-10", end: "2026-11-10", status: "doing" },
     { id: "T10", phase: "P2", title: "prompt v2", note: "界面信息分区；选区=改写指令；保语言", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T11", phase: "P2", title: "输出守护", note: "禁助手开场白 + 长度比例 + 空输出", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "M2", phase: "P2", milestone: true, title: "上下文改写上线（原生 app）", start: "2026-11-11", end: "2026-11-11" },
+    { id: "M2", phase: "P2", milestone: true, title: "原生 app 内上下文改写 + 选区改写", start: "2026-11-10", end: "2026-11-10" },
 
     { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "已装；ANE 会卡死，改 cpuAndGPU 后 17s 加载", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "turbo+prompt 胜出：CER 13.5% / 术语 87%；large-v3 RTF≈1.0 出局", start: "2026-11-10", end: "2026-11-10", status: "done" },
