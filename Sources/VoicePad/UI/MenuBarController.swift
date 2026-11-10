@@ -126,6 +126,10 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         branchItem.target = self
         menu.addItem(branchItem)
 
+        let axItem = NSMenuItem(title: "Check Text Context (this app)", action: #selector(checkContext), keyEquivalent: "")
+        axItem.target = self
+        menu.addItem(axItem)
+
         let settingsItem = NSMenuItem(title: "API Settings...", action: #selector(openAPISettings), keyEquivalent: ",")
         settingsItem.target = self
         menu.addItem(settingsItem)
@@ -233,6 +237,24 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openAppContexts() {
         SettingsWindowController.shared.showTab(.appContexts)
+    }
+
+    /// Reports what VoicePad can read from the frontmost app's focused field.
+    /// Needed because many apps expose nothing, and the answer decides whether the
+    /// context-aware rewriting can work there at all.
+    @objc private func checkContext() {
+        let context = ContextReader.read()
+        let selected = context.selectedText.map { "\($0.count)ch" } ?? "no"
+        let summary = """
+        app=\(context.appName ?? "-")  bundle=\(context.bundleID ?? "-")
+        found=\(context.source ?? "-")  role=\(context.role ?? "-")
+        selection=\(selected)  before=\(context.textBeforeCursor?.count ?? 0)ch  after=\(context.textAfterCursor?.count ?? 0)ch
+        """
+        vpLog("[ContextCheck] " + summary.replacingOccurrences(of: "\n", with: " | "))
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(summary, forType: .string)
+        // Result also lands on the clipboard so it can be pasted straight back.
+        NSSound(named: "Pop")?.play()
     }
 
     @objc private func openAPISettings() {
