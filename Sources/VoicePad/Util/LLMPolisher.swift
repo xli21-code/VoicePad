@@ -523,6 +523,12 @@ final class LLMPolisher {
         return parts.joined(separator: "\n\n")
     }
 
+    /// The polish prompt without dictionary or app-branch additions, for the regression
+    /// harness (`VoicePad --dump-polish-prompt`).
+    static func debugPolishPrompt() -> String {
+        LLMPolisher().buildSystemPrompt(dictionaryTerms: [], appBranchPrompt: nil, context: nil)
+    }
+
     /// The field the user was in, and the text around the caret. Kept separate from the rules
     /// above because it changes per dictation and must not be confused with instructions.
     static func contextBlock(_ context: DictationContext) -> String {

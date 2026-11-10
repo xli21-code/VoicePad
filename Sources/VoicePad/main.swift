@@ -17,6 +17,14 @@ func vpLog(_ msg: String) {
     }
 }
 
+// Debug/regression hook: print the exact system prompt the polisher would send, so the
+// evaluation harness measures the shipped prompt instead of a stale copy of it.
+if CommandLine.arguments.contains("--dump-polish-prompt") {
+    // FileHandle writes are unbuffered; print() would be lost when stdout is a pipe.
+    FileHandle.standardOutput.write(Data(LLMPolisher.debugPolishPrompt().utf8))
+    exit(0)
+}
+
 vpLog("=== VoicePad Starting ===")
 
 // Prevent multiple instances — activate existing one if already running
