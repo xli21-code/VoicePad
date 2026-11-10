@@ -361,6 +361,14 @@ final class LLMPolisher {
             return nil
         }
 
+        // A selection changes the job: the utterance is an instruction about that text,
+        // not material to clean up. Mixing the two rule sets made the model "polish" the
+        // instruction itself and paste it over the selection.
+        if let context, context.hasSelection, let selected = context.selectedText, !selected.isEmpty {
+            return await edit(instruction: text, original: selected, config: config, apiKey: apiKey,
+                              dictionaryTerms: dictionaryTerms)
+        }
+
         let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms,
                                              appBranchPrompt: appBranchPrompt,
                                              context: context)
@@ -373,6 +381,50 @@ final class LLMPolisher {
             vpLog("[LLMPolisher] error: \(error)")
             return nil
         }
+    }
+
+    /// Rewrites the selected text according to what the speaker said.
+    /// Returns nil when the model fails, returns the unchanged original, or echoes the
+    /// instruction back — in all three cases the caller must leave the selection alone
+    /// rather than overwrite it with the instruction.
+    private func edit(instruction: String, original: String, config: VoicePadConfig, apiKey: String,
+                      dictionaryTerms: [String]) async -> String? {
+        let systemPrompt = """
+        你是一个文本改写工具。用户给出一段【原文】和一句【修改要求】，你按修改要求改写原文。
+        规则：
+        1. 只输出改写后的完整文本，不要解释、不要加引号、不要复述修改要求
+        2. 输出必须是原文的改写版本，不能是修改要求本身
+        3. 保持原文的语言（中文不要翻成英文），英文术语保持原拼写
+        4. 不要添加原文没有的信息；改写幅度以要求为准，没要求改的部分尽量保持原样
+        5. 不要加前缀（如"好的"、"改写后"）
+        """
+        let user = "【原文】\n\(original)\n\n【修改要求】\n\(instruction)"
+        do {
+            let result = try await callLLM(config: config, apiKey: apiKey, model: config.model,
+                                           systemPrompt: systemPrompt, userText: user,
+                                           maxTokens: 1024, lengthReference: original)
+            if Self.isEchoOfInstruction(result, instruction: instruction, original: original) {
+                vpLog("[LLMPolisher] edit rejected: model echoed the instruction or changed nothing")
+                return nil
+            }
+            vpLog("[LLMPolisher] edit: '\(original.prefix(30))' → '\(result.prefix(30))'")
+            return result
+        } catch {
+            vpLog("[LLMPolisher] edit error: \(error)")
+            return nil
+        }
+    }
+
+    /// The three ways an "edit" can be a no-op: identical to the original, identical to the
+    /// instruction, or the instruction with a stray punctuation change.
+    static func isEchoOfInstruction(_ output: String, instruction: String, original: String) -> Bool {
+        // Punctuation-only differences must not hide an echo.
+        let ignored = CharacterSet.punctuationCharacters.union(.whitespacesAndNewlines)
+        func squash(_ s: String) -> String {
+            String(String.UnicodeScalarView(s.unicodeScalars.filter { !ignored.contains($0) })).lowercased()
+        }
+        let out = squash(output)
+        return out == squash(instruction) || out == squash(original)
     }
 
     // MARK: - Translation
@@ -509,10 +561,10 @@ final class LLMPolisher {
         return trimmed.count * 10 >= inputCount * 3
     }
 
-    private func callLLM(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024) async throws -> String {
-        let input = userText ?? prompt ?? ""
+    private func callLLM(config: VoicePadConfig, apiKey: String, model: String, systemPrompt: String? = nil, userText: String? = nil, prompt: String? = nil, maxTokens: Int = 1024, lengthReference: String? = nil) async throws -> String {
+        let input = lengthReference ?? userText ?? prompt ?? ""
         // Prompt→answer calls must not be judged by output/input length ratio.
-        let checkLength = userText != nil
+        let checkLength = (userText != nil || lengthReference != nil)
         var tokens = maxTokens
 
         for attempt in 1...2 {

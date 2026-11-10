@@ -129,3 +129,29 @@ struct LLMPolisherTests {
         #expect(LLMPolisher.isUsableOutput(output, for: input))
     }
 }
+
+@Suite("Selection edit guard")
+struct SelectionEditGuardTests {
+    private let original = "这个方案不行"
+    private let instruction = "改得再客气一点"
+
+    @Test("Echoing the instruction is rejected")
+    func echoRejected() {
+        #expect(LLMPolisher.isEchoOfInstruction("改得再客气一点。", instruction: instruction, original: original))
+    }
+
+    @Test("Returning the original unchanged is rejected")
+    func unchangedRejected() {
+        #expect(LLMPolisher.isEchoOfInstruction("这个方案不行。", instruction: instruction, original: original))
+    }
+
+    @Test("A real rewrite passes")
+    func rewriteAccepted() {
+        #expect(!LLMPolisher.isEchoOfInstruction("这个方案还有改进空间。", instruction: instruction, original: original))
+    }
+
+    @Test("Punctuation-only differences still count as an echo")
+    func punctuationInsensitive() {
+        #expect(LLMPolisher.isEchoOfInstruction("改得再客气一点", instruction: "改得再客气一点。", original: original))
+    }
+}

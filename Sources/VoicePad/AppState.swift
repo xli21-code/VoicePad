@@ -403,6 +403,18 @@ final class AppState {
             }
         }
 
+        // Edit mode failed: leave the selected text untouched. Pasting the instruction over it
+        // would be worse than doing nothing.
+        if polishEnabled, dictationContext?.hasSelection == true, polishedForLog == nil {
+            vpLog("[AppState] edit failed, original text left untouched")
+            await MainActor.run {
+                phase = .error("改写失败，原文未改动")
+                updateOverlay()
+            }
+            scheduleIdleReset(after: 2)
+            return
+        }
+
         // Save to history
         let audioDurationS = Double(samples.count) / 16000.0
         let entry = TranscriptEntry(
