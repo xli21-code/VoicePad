@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 14:10",
+  updated: "2026-11-10 15:20",
   range: { start: "2026-11-09", end: "2026-11-25" },
   today: "2026-11-09",
   phases: [
@@ -195,6 +195,7 @@ const PLAN = {
     { id: "P3", name: "引擎与术语", branch: "feat/engine-and-terms" },
     { id: "P4", name: "落字", branch: "feat/insertion" },
     { id: "P5", name: "学习闭环", branch: "feat/learning-loop" },
+    { id: "P6", name: "格式化输出", branch: "feat/formatting" },
   ],
   tasks: [
     { id: "T0", phase: "P0", title: "提交并推送既有纠错改动", note: "24 tests，origin/main 已同步", start: "2026-11-09", end: "2026-11-09", status: "done" },
@@ -220,16 +221,23 @@ const PLAN = {
 
     { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-14", end: "2026-11-17", status: "planned" },
     { id: "T18", phase: "P4", title: "预览期增量替换（已随流式暂缓）", note: "没有流式预览，这一项没有对象", start: "2026-11-16", end: "2026-11-18", status: "planned" },
-    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-18", end: "2026-11-18", status: "planned" },
+    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "tap 被系统静默禁用时自动重启", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-18", end: "2026-11-18" },
 
     { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "基线证明这是最高杠杆：术语 60% 存活", start: "2026-11-26", end: "2026-11-27", status: "planned" },
     { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "分支语气已注入 prompt；周报评测未做", start: "2026-11-19", end: "2026-11-22", status: "doing" },
     { id: "T23", phase: "P0", title: "回归评测一键跑", note: "改 prompt / 换模型后跑 37 条防退化", start: "2026-11-11", end: "2026-11-12", status: "planned" },
     { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "RMS 过低或输出仅标点 → 不出字", start: "2026-11-11", end: "2026-11-11", status: "planned" },
-    { id: "T25", phase: "P4", title: "CGEventTap 看门狗", note: "系统静默禁用事件监听时自动重启", start: "2026-11-11", end: "2026-11-11", status: "planned" },
-    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-11-22", end: "2026-11-25", status: "planned" },
-    { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-11-25", end: "2026-11-25" },
+    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "现只有 4 词 / 11 别名，等于没启用", start: "2026-11-14", end: "2026-11-15", status: "planned" },
+    { id: "T29", phase: "P5", title: "词表粘贴导入", note: "一次粘贴多行/多词，自动去重", start: "2026-11-15", end: "2026-11-16", status: "planned" },
+    { id: "T30", phase: "P5", title: "选中即加词", note: "选中文本 → 菜单一键进词表", start: "2026-11-16", end: "2026-11-16", status: "planned" },
+    { id: "T31", phase: "P5", title: "自动提议新词", note: "从历史里找高频、未收录的英文词，一键采纳", start: "2026-11-16", end: "2026-11-17", status: "planned" },
+    { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-11-17", end: "2026-11-17" },
+
+    { id: "T26", phase: "P6", title: "输出格式策略（按 app）", note: "聊天=纯文本 / 文档=可分段 / 代码=不粉饰", start: "2026-11-18", end: "2026-11-19", status: "planned" },
+    { id: "T27", phase: "P6", title: "放开结构化 + 内容守护", note: "允许列表/分段，但禁止编造与增删事实", start: "2026-11-19", end: "2026-11-21", status: "planned" },
+    { id: "T28", phase: "P6", title: "语音格式指令", note: "「分三点」「写成邮件」「缩成两句」", start: "2026-11-21", end: "2026-11-23", status: "planned" },
+    { id: "M6", phase: "P6", milestone: true, title: "结构化输出可用", start: "2026-11-23", end: "2026-11-23" },
   ],
   blockers: [
     { id: "B1", title: "Magpie 能否注册 audio/STT provider", desc: "端点 /v1/audio/transcriptions 已存在但无 audio 模型。只影响「云端 ASR 是否也进网关」，本地 ASR 路线不受影响，故不再阻塞。", owner: "我", tag: "可后置", level: "grey" },
