@@ -185,9 +185,10 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 16:10",
+  updated: "2026-11-10 04:20",
   range: { start: "2026-11-09", end: "2026-11-25" },
-  today: "2026-11-09",
+  // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
+  today: new Date().toLocaleDateString("sv-SE"),
   phases: [
     { id: "P0", name: "评测底座", branch: "chore/eval-harness" },
     { id: "P1", name: "模型网关", branch: "feat/model-gateway" },
@@ -219,16 +220,16 @@ const PLAN = {
     { id: "T20", phase: "P3", title: "繁简归一（术语 prompt 已完成）", note: "Whisper 偶吐繁体，靠 prompt 压着，缺确定性兜底", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "M3", phase: "P3", milestone: true, title: "术语不再崩坏", start: "2026-11-13", end: "2026-11-13" },
 
-    { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-14", end: "2026-11-17", status: "planned" },
+    { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "剪贴板+Cmd+V 仍是唯一通用路径；AXValue 只用在纠错替换上", start: "2026-11-14", end: "2026-11-17", status: "planned" },
     { id: "T18", phase: "P4", title: "预览期增量替换（已随流式暂缓）", note: "没有流式预览，这一项没有对象", start: "2026-11-16", end: "2026-11-18", status: "planned" },
     { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "tap 被系统静默禁用时自动重启", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-18", end: "2026-11-18" },
 
-    { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "基线证明这是最高杠杆：术语 60% 存活", start: "2026-11-26", end: "2026-11-27", status: "planned" },
+    { id: "T25", phase: "P5", title: "hotwords 注入 ASR", note: "ASRPrompt.build(vocabulary:) 已接词表，只回灌拉丁术语；术语存活 60% → 87%", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "分支语气已注入 prompt；周报评测未做", start: "2026-11-19", end: "2026-11-22", status: "doing" },
-    { id: "T23", phase: "P0", title: "回归评测一键跑", note: "scripts/regress.py；5 道 gate 全绿，基线已存", start: "2026-11-10", end: "2026-11-10", status: "done" },
+    { id: "T23", phase: "P0", title: "回归评测一键跑", note: "scripts/regress.py；5 道 gate 全绿，基线已存；--dump-polish-prompt 钩子已提交，干净树可跑", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "RMS 过低或输出仅标点 → 不出字", start: "2026-11-11", end: "2026-11-11", status: "planned" },
-    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "现只有 4 词 / 11 别名，等于没启用", start: "2026-11-14", end: "2026-11-15", status: "planned" },
+    { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "缺的是 newTerms：applyToVocabulary 只收 aliases，新词永远进不了词表；现 4 词 / 11 别名", start: "2026-11-14", end: "2026-11-15", status: "planned" },
     { id: "T29", phase: "P5", title: "词表粘贴导入", note: "一次粘贴多行/多词，自动去重", start: "2026-11-15", end: "2026-11-16", status: "planned" },
     { id: "T30", phase: "P5", title: "选中即加词", note: "选中文本 → 菜单一键进词表", start: "2026-11-16", end: "2026-11-16", status: "planned" },
     { id: "T31", phase: "P5", title: "自动提议新词", note: "从历史里找高频、未收录的英文词，一键采纳", start: "2026-11-16", end: "2026-11-17", status: "planned" },
@@ -247,7 +248,7 @@ const PLAN = {
     { id: "B7", title: "没有 macOS 26 SDK，Apple SpeechTranscriber 编不了", desc: "本机只有 CLT 15.5 SDK（无 Xcode 26）。横评已改走 WhisperKit，本条降级为「若将来装 Xcode 26 再评估」。", owner: "你", tag: "已绕过", level: "grey" },
     { id: "B9", title: "Whisper 输出无标点、偶发繁体", desc: "横评实测：所有输出无标点，第 11 句整句繁体，一条短片被翻成英文。需要确定性繁→简补丁 + 改写层补标点，不能指望 ASR。", owner: "我", tag: "P3 内解决", level: "grey" },
     { id: "B8", title: "xl3049 中转的模型全挂了", desc: "改写因此被关掉。现已把 provider 切到 Magpie（deepseek-flash，0.86s），config 备份在 config.json.bak-20261109。", owner: "已处理", tag: "已恢复", level: "grey" },
-    { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。P1 结束前先抽 DictationPipeline，否则每条分支合并都要手工解冲突。", owner: "我", tag: "结构性", level: "red" },
+    { id: "B6", title: "AppState 是热文件，三阶段并行会撞车", desc: "P2/P3/P4 都要改录音→粘贴主链。P1 结束前先抽 DictationPipeline，否则每条分支合并都要手工解冲突。目前下面那张分支表一条分支都还没开，全部工作直推 main。", owner: "我", tag: "结构性", level: "red" },
   ],
   userActions: [
     { title: "录 30–50 条对照集", desc: "每类 5–8 条：纯中文、中文夹英文术语、专有名词、边想边说（自我纠正）、30s+ 长句、安静/嘈杂各半。只放本机 ~/.voicepad/eval/。", tag: "阻塞 M0 / P3" },
@@ -375,8 +376,10 @@ function row(t, isPhase, list) {
   });
   // today 竖线覆盖全高
   const todayIdx = off(PLAN.today, PLAN.range.start);
-  html += `<div class="today" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px"></div>
-           <div class="today-flag" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px">今天 ${PLAN.today.slice(5)}</div>`;
+  if (todayIdx >= 0 && todayIdx < days) {
+    html += `<div class="today" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px"></div>
+             <div class="today-flag" style="left:${labelW + todayIdx * DAYW + DAYW / 2}px">今天 ${PLAN.today.slice(5)}</div>`;
+  }
   gw.innerHTML = html;
   gw.style.position = "relative";
 })();
