@@ -11,6 +11,11 @@ struct TextProcessor {
         // SenseVoice may include event/emotion tags like <|SPEECH|> — remove them
         result = removeSenseVoiceTags(result)
 
+        // Whisper occasionally writes a whole utterance in traditional characters, even
+        // though the prompt asks for 简体中文 (one of the 37 evaluation recordings came back
+        // entirely traditional). Fix it before the rewrite stage looks at the text.
+        result = normalizeToSimplified(result)
+
         // Remove filler words (呃、嗯、uh、um, repeated phrases, etc.)
         result = removeFillerWords(result)
 
@@ -34,6 +39,20 @@ struct TextProcessor {
         let aliases = VocabularyStore.shared.load().aliases
         guard !aliases.isEmpty else { return text }
         return VocabularyStore.shared.applyAliases(text, aliases: aliases)
+    }
+
+    // MARK: - Traditional → Simplified
+
+    /// ICU's Traditional-Simplified transform, not a hand-written character map: it is
+    /// phrase-aware (著 stays 著 in 著名 but becomes 着 in 看著), so it does not corrupt
+    /// characters that are valid in both forms.
+    private func normalizeToSimplified(_ text: String) -> String {
+        // Cheap gate: Latin-only text cannot need this, and the transform is not free.
+        guard text.unicodeScalars.contains(where: { $0.value > 0x2E80 }) else { return text }
+        let transform = StringTransform(rawValue: "Traditional-Simplified")
+        guard let simplified = text.applyingTransform(transform, reverse: false),
+              simplified != text else { return text }
+        return simplified
     }
 
     // MARK: - Filler Word Removal
