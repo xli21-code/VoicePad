@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 13:05",
+  updated: "2026-11-10 14:10",
   range: { start: "2026-11-09", end: "2026-11-25" },
   today: "2026-11-09",
   phases: [
@@ -205,7 +205,7 @@ const PLAN = {
 
     { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "本机已切 Magpie，35 tests", start: "2026-11-09", end: "2026-11-09", status: "done" },
     { id: "T5", phase: "P1", title: "/v1/models 全量 picker", note: "60 模型；已做成 润色/翻译/导入 三行各选各的", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "T6", phase: "P1", title: "空输出判失败（竞速未做）", note: "空/过短判失败已落地；双候选竞速推迟", start: "2026-11-10", end: "2026-11-10", status: "doing" },
+    { id: "T6", phase: "P1", title: "空输出 / 过短 / 回声判失败", note: "已落地；双候选竞速仍推迟", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "M1", phase: "P1", milestone: true, title: "切模型不改代码", start: "2026-11-09", end: "2026-11-09" },
 
     { id: "T8", phase: "P2", title: "AX 读取层", note: "TextEdit 通(选区+前文)；Chrome/Herdr 零暴露", start: "2026-11-10", end: "2026-11-10", status: "doing" },
@@ -215,16 +215,19 @@ const PLAN = {
 
     { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "已装；ANE 会卡死，改 cpuAndGPU 后 17s 加载", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "turbo+prompt 胜出：CER 13.5% / 术语 87%；large-v3 RTF≈1.0 出局", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "T20", phase: "P3", title: "术语 prompt + 繁简归一", note: "prompt 已进 App（ASRPrompt）", start: "2026-11-11", end: "2026-11-13", status: "planned" },
+    { id: "T20", phase: "P3", title: "繁简归一（术语 prompt 已完成）", note: "Whisper 偶吐繁体，靠 prompt 压着，缺确定性兜底", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "M3", phase: "P3", milestone: true, title: "术语不再崩坏", start: "2026-11-13", end: "2026-11-13" },
 
     { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "三级策略，剪贴板不再唯一", start: "2026-11-14", end: "2026-11-17", status: "planned" },
-    { id: "T18", phase: "P4", title: "预览期增量替换", note: "定稿段替换灰字，不重粘全文", start: "2026-11-16", end: "2026-11-18", status: "planned" },
+    { id: "T18", phase: "P4", title: "预览期增量替换（已随流式暂缓）", note: "没有流式预览，这一项没有对象", start: "2026-11-16", end: "2026-11-18", status: "planned" },
     { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "系统会静默禁用事件监听", start: "2026-11-18", end: "2026-11-18", status: "planned" },
     { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-18", end: "2026-11-18" },
 
     { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "基线证明这是最高杠杆：术语 60% 存活", start: "2026-11-26", end: "2026-11-27", status: "planned" },
-    { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "同一句在 Slack / 代码 产出不同格式", start: "2026-11-19", end: "2026-11-22", status: "planned" },
+    { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "分支语气已注入 prompt；周报评测未做", start: "2026-11-19", end: "2026-11-22", status: "doing" },
+    { id: "T23", phase: "P0", title: "回归评测一键跑", note: "改 prompt / 换模型后跑 37 条防退化", start: "2026-11-11", end: "2026-11-12", status: "planned" },
+    { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "RMS 过低或输出仅标点 → 不出字", start: "2026-11-11", end: "2026-11-11", status: "planned" },
+    { id: "T25", phase: "P4", title: "CGEventTap 看门狗", note: "系统静默禁用事件监听时自动重启", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "pairs.jsonl → alias，同错不重犯", start: "2026-11-22", end: "2026-11-25", status: "planned" },
     { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-11-25", end: "2026-11-25" },
   ],
