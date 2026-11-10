@@ -369,7 +369,7 @@ final class AppState {
 
             let context = contextHolder.take()
             if let context {
-                vpLog("[AppState] context: app=\(context.appName ?? "-") role=\(context.role ?? "-") selection=\(context.hasSelection) before=\(context.textBeforeCursor?.count ?? 0)ch")
+                vpLog("[AppState] context: app=\(context.appName ?? "-") src=\(context.source ?? "-") role=\(context.role ?? "-") selection=\(context.hasSelection ? "\(context.selectedText?.count ?? 0)ch" : "no") before=\(context.textBeforeCursor?.count ?? 0)ch")
             }
 
             if let polished = await llmPolisher.polish(

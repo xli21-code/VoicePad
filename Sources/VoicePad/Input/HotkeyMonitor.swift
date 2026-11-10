@@ -19,6 +19,7 @@ final class HotkeyMonitor {
     private var localFlagsMonitor: Any?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    private var remoteKeyHeld = false
 
     // Double-tap detection state
     private var isKeyDown = false
@@ -77,12 +78,16 @@ final class HotkeyMonitor {
         }
 
         // Monitor non-modifier key presses for chord rejection
-        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] _ in
+        globalKeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            if self?.handleRemoteKey(event) == true { return }
+            guard event.type == .keyDown else { return }
             guard let self, self.isKeyDown else { return }
             self.otherKeyPressed = true
         }
 
-        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        localKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] event in
+            if self?.handleRemoteKey(event) == true { return nil }
+            guard event.type == .keyDown else { return event }
             if let self, self.isKeyDown {
                 self.otherKeyPressed = true
             }
@@ -91,6 +96,11 @@ final class HotkeyMonitor {
     }
 
     func stop() {
+        if remoteKeyHeld {
+            remoteKeyHeld = false
+            isRecordingActive = false
+            onKeyUp?()
+        }
         longPressTimer?.invalidate()
         longPressTimer = nil
         if let monitor = globalFlagsMonitor {
@@ -111,7 +121,29 @@ final class HotkeyMonitor {
         }
     }
 
+    /// F18 is a separate push-to-talk input for the remote; modifier gestures stay unchanged.
+    @discardableResult
+    func handleRemoteKey(_ event: NSEvent) -> Bool {
+        guard event.keyCode == 79 else { return false }
+        if event.type == .keyDown {
+            guard !event.isARepeat, !remoteKeyHeld, !isRecordingActive,
+                  event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+            else { return true }
+            remoteKeyHeld = true
+            lastTapTime = nil
+            longPressTimer?.invalidate()
+            isRecordingActive = true
+            onKeyDown?()
+        } else if event.type == .keyUp, remoteKeyHeld {
+            remoteKeyHeld = false
+            isRecordingActive = false
+            onKeyUp?()
+        }
+        return true
+    }
+
     private func handleFlags(_ event: NSEvent) {
+        guard !remoteKeyHeld else { return }
         let eventKeyCode = Int(event.keyCode)
 
         // Check if this event is for our configured hotkey

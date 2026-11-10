@@ -52,7 +52,7 @@ struct ContextTests {
     @Test("Context block treats a selection as an edit instruction")
     func selectionMeansEdit() {
         let context = DictationContext(appName: "Slack", bundleID: "com.tinyspeck.slackmacgap",
-                                       role: "AXTextArea", selectedText: "这个方案不行",
+                                       role: "AXTextArea", source: "focused", selectedText: "这个方案不行",
                                        textBeforeCursor: nil, textAfterCursor: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("Slack"))
@@ -65,7 +65,7 @@ struct ContextTests {
     @Test("Context block passes surrounding text without asking for a continuation")
     func beforeCursorOnly() {
         let context = DictationContext(appName: "Notes", bundleID: "com.apple.Notes",
-                                       role: "AXTextArea", selectedText: nil,
+                                       role: "AXTextArea", source: "focused", selectedText: nil,
                                        textBeforeCursor: "上周的复盘是这样的：", textAfterCursor: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("光标前文"))
@@ -81,5 +81,23 @@ struct ContextTests {
         #expect(!LLMPolisher.isUsableOutput("Here is the cleaned text.", for: input))
         // The same words are fine when the speaker actually said them.
         #expect(LLMPolisher.isUsableOutput("好的，我下午三点过去", for: "好的我下午三点过去"))
+    }
+}
+
+@Suite("Selection slice")
+struct SelectionSliceTests {
+    @Test("Selection is taken from the value + range")
+    func selectedSlice() {
+        let value = "这个方案不行，我不同意"
+        let ns = value as NSString
+        let range = ns.range(of: "这个方案不行")
+        #expect(ContextReader.selectedSlice(from: value, range: range) == "这个方案不行")
+    }
+
+    @Test("Empty or out-of-bounds ranges yield nothing")
+    func selectedSliceEdges() {
+        #expect(ContextReader.selectedSlice(from: "abc", range: NSRange(location: 1, length: 0)) == nil)
+        #expect(ContextReader.selectedSlice(from: "abc", range: NSRange(location: 2, length: 9)) == nil)
+        #expect(ContextReader.selectedSlice(from: "abc", range: NSRange(location: NSNotFound, length: 1)) == nil)
     }
 }

@@ -96,6 +96,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let hotkeyItem = NSMenuItem(title: "Hotkey: Double-tap \(hotkeyName)", action: nil, keyEquivalent: "")
         hotkeyItem.submenu = buildHotkeySubmenu()
         menu.addItem(hotkeyItem)
+        menu.addItem(withTitle: "Remote: Hold F18 to talk", action: nil, keyEquivalent: "").isEnabled = false
 
         let micName = selectedMicName()
         let micItem = NSMenuItem(title: "Microphone (\(micName))", action: nil, keyEquivalent: "")
