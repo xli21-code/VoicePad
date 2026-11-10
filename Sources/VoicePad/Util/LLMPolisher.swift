@@ -124,7 +124,8 @@ final class LLMPolisher {
     }
 
     /// Save config values to file.
-    func saveConfig(apiKey: String? = nil, baseURL: String? = nil, model: String? = nil) {
+    func saveConfig(apiKey: String? = nil, baseURL: String? = nil, model: String? = nil,
+                    translateModel: String? = nil, importModel: String? = nil) {
         var json: [String: Any] = [:]
 
         // Read existing config
@@ -151,10 +152,21 @@ final class LLMPolisher {
         }
         if let model {
             json["model"] = model
-            if var models = json["models"] as? [String: Any] {
-                models["polish"] = model
-                json["models"] = models
-            }
+            // Always write the role map: it is what loadConfig() prefers, so a UI save must
+            // never leave a stale value shadowing it.
+            var models = json["models"] as? [String: Any] ?? [:]
+            models["polish"] = model
+            json["models"] = models
+        }
+        if let translateModel {
+            var models = json["models"] as? [String: Any] ?? [:]
+            models["translate"] = translateModel
+            json["models"] = models
+        }
+        if let importModel {
+            var models = json["models"] as? [String: Any] ?? [:]
+            models["import"] = importModel
+            json["models"] = models
         }
 
         if let data = try? JSONSerialization.data(withJSONObject: json, options: .prettyPrinted) {

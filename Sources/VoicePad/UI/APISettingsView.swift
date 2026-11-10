@@ -5,6 +5,8 @@ struct APISettingsView: View {
     @State private var apiKey = ""
     @State private var baseURL = ""
     @State private var model = VoicePadConfig.defaultModel
+    @State private var translateModel = VoicePadConfig.defaultModel
+    @State private var importModel = VoicePadConfig.defaultModel
     @State private var testStatus: TestStatus = .idle
     @State private var testMessage = ""
     @State private var remoteModels: [RemoteModel] = []
@@ -76,38 +78,14 @@ struct APISettingsView: View {
                         .textFieldStyle(.roundedBorder)
                 }
 
-                LabeledContent("Model") {
-                    VStack(alignment: .leading, spacing: 6) {
-                        if remoteModels.isEmpty {
-                            Picker("", selection: $model) {
-                                ForEach(VoicePadConfig.availableModels, id: \.id) { m in
-                                    Text(m.label).tag(m.id)
-                                }
-                            }
-                            .labelsHidden()
-                        } else {
-                            Picker("", selection: $model) {
-                                ForEach(remoteModelGroups, id: \.owner) { group in
-                                    Section(group.owner.isEmpty ? "Other" : group.owner) {
-                                        ForEach(group.models) { m in
-                                            Text(m.displayName ?? m.id).tag(m.id)
-                                        }
-                                    }
-                                }
-                            }
-                            .labelsHidden()
-                        }
-
-                        TextField("or type a model id", text: $model)
-                            .textFieldStyle(.roundedBorder)
-                            .font(.caption.monospaced())
-                    }
-                }
+                modelRow("Polish model", $model)
+                modelRow("Translation model", $translateModel)
+                modelRow("Import model", $importModel)
             } header: {
                 Text("LLM API Configuration")
                     .font(.headline)
             } footer: {
-                Text("Configure the Claude API for Smart Polish and vocabulary import.")
+                Text("One gateway for every model: Smart Polish, translation and vocabulary import can each use a different model.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -155,6 +133,41 @@ struct APISettingsView: View {
         apiKey = config.apiKey ?? ""
         baseURL = config.baseURL == VoicePadConfig.defaultBaseURL ? "" : config.baseURL
         model = config.model
+        translateModel = config.translateModel
+        importModel = config.importModel
+    }
+
+    /// One row per LLM role. A plain text field keeps long gateway ids (e.g.
+    /// `ollama-cloud/deepseek-v4.1-flash:1017`) editable, and the menu is a shortcut into
+    /// whatever the gateway currently serves.
+    private func modelRow(_ title: String, _ binding: Binding<String>) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 6) {
+                TextField("model id", text: binding)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.caption.monospaced())
+                Menu {
+                    if remoteModels.isEmpty {
+                        Button("Test Connection to load models") {}
+                            .disabled(true)
+                    } else {
+                        ForEach(remoteModelGroups) { group in
+                            Section(group.owner.isEmpty ? "Other" : group.owner) {
+                                ForEach(group.models) { remote in
+                                    Button(remote.displayName ?? remote.id) {
+                                        binding.wrappedValue = remote.id
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "list.bullet")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+            }
+        }
     }
 
     private var effectiveBaseURL: String {
@@ -196,7 +209,9 @@ struct APISettingsView: View {
         polisher.saveConfig(
             apiKey: key.isEmpty ? nil : key,
             baseURL: url.isEmpty ? nil : url,
-            model: model
+            model: model,
+            translateModel: translateModel,
+            importModel: importModel
         )
         vpLog("[APISettings] Config saved")
     }
