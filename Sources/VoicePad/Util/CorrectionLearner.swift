@@ -121,6 +121,11 @@ struct CorrectionLearner {
                 } else if let next = diff.nextLCS, isContentCJK(next) {
                     fromTokens.append(next)
                     toTokens.append(next)
+                } else {
+                    // A bare character is not a correction, it is a rule that rewrites every
+                    // occurrence of that character in every dictation (退→推 would hit 后退).
+                    // Unanchored, it stays unlearned; the user can add it by hand.
+                    continue
                 }
             }
 
@@ -129,10 +134,19 @@ struct CorrectionLearner {
             guard !fromText.isEmpty, !toText.isEmpty else { continue }
             if fromText.lowercased() == toText.lowercased() { continue }
             if fromTokens.count > 8 || toTokens.count > 8 { continue }
+            // An alias is applied to every dictation forever. Anything sentence-shaped, or a
+            // pure punctuation change, has no word-level lesson in it.
+            if fromText.contains(where: isSentencePunctuation)
+                || toText.contains(where: isSentencePunctuation) { continue }
+            let stripPunctuation: (String) -> String = { $0.filter { !$0.isPunctuation && !$0.isWhitespace } }
+            if stripPunctuation(fromText) == stripPunctuation(toText) { continue }
 
             newAliases.append(Alias(from: fromText, to: toText))
         }
 
+        // Terms stay untouched on purpose: an alias already guarantees the fix at zero
+        // prompt cost, while a term would compete for the 300-character Whisper prompt
+        // that real domain terms need.
         return LearnResult(newAliases: newAliases, newTerms: [])
     }
 
@@ -207,6 +221,9 @@ struct CorrectionLearner {
     /// Used to decide if a character is worth including when expanding aliases.
     private func isContentCJK(_ token: String) -> Bool {
         guard token.count == 1, let char = token.first, isCJK(char) else { return false }
+        // Punctuation is in the CJK range but is never a word boundary. Treating 「，」as
+        // context produced aliases like 退，→　推， that fire on any 退 before a comma.
+        guard !char.isPunctuation, !char.isWhitespace, !char.isSymbol else { return false }
         // Common function words / particles / pronouns — poor word-boundary markers
         let stopChars: Set<Character> = [
             "的", "了", "在", "是", "和", "或", "也", "都", "就", "会", "把", "被",
@@ -216,6 +233,11 @@ struct CorrectionLearner {
             "来", "上", "下", "中", "里", "用", "着", "过", "要", "能", "可", "得",
         ]
         return !stopChars.contains(char)
+    }
+
+    /// Punctuation that ends a sentence or clause: an alias containing it is not a word.
+    private func isSentencePunctuation(_ char: Character) -> Bool {
+        "。！？!?；;\n".contains(char)
     }
 
     /// Check if a character is CJK (Chinese/Japanese/Korean).

@@ -599,21 +599,16 @@ final class AppState {
             self.lastPastedText = corrected
             self.lastPasteTime = Date()
 
-            // Learn aliases
+            // Learn aliases. The learner only emits word-level candidates now, so they are
+            // applied directly: the confirmation panel used to steal focus right after every
+            // correction. The alias list in Settings is where they are reviewed or removed.
             let result = self.correctionLearner.extractCorrections(original: original, corrected: corrected)
             if !result.newAliases.isEmpty {
-                AliasConfirmPanel.shared.show(aliases: result.newAliases) { [weak self] approved in
-                    guard let self, !approved.isEmpty else {
-                        vpLog("[AppState] No aliases approved")
-                        return
-                    }
-                    let filtered = CorrectionLearner.LearnResult(newAliases: approved, newTerms: [])
-                    let (_, aliases) = self.correctionLearner.applyToVocabulary(filtered)
-                    if aliases > 0 {
-                        vpLog("[AppState] Correction learned: +\(aliases) aliases")
-                        NSSound(named: "Glass")?.play()
-                        self.learnResult = "+\(aliases) aliases"
-                    }
+                let (_, aliases) = self.correctionLearner.applyToVocabulary(result)
+                if aliases > 0 {
+                    vpLog("[AppState] Correction learned: +\(aliases) aliases")
+                    NSSound(named: "Glass")?.play()
+                    self.learnResult = "+\(aliases) aliases"
                 }
             }
 

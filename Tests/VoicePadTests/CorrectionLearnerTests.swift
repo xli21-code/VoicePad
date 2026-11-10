@@ -60,16 +60,35 @@ struct CorrectionLearnerTests {
         #expect(result.newAliases.first?.to == "尽调")
     }
 
-    @Test("Apply to vocabulary adds new items")
-    func applyToVocabulary() {
-        let result = CorrectionLearner.LearnResult(
-            newAliases: [Alias(from: "test_wrong", to: "test_right")],
-            newTerms: ["test_right"]
+    @Test("A correction inside a long sentence is narrowed to the word")
+    func narrowsToWord() {
+        let original = "其他里面我都觉得没什么问题。就是我们刚刚说的，像蒙字那边的这个仲裁，我觉得可以定下来。"
+        let corrected = "其他里面我都觉得没什么问题。就是我们刚刚说的，像蒙自那边的这个仲裁，我觉得可以定下来。"
+
+        let result = learner.extractCorrections(original: original, corrected: corrected)
+
+        #expect(result.newAliases.count == 1)
+        #expect(result.newAliases.first?.from == "蒙字")
+        #expect(result.newAliases.first?.to == "蒙自")
+    }
+
+    @Test("A lone CJK character with no word to anchor it is not learned")
+    func unanchoredCharacterIsSkipped() {
+        // 就 is a function word and the comma is punctuation, so nothing can anchor 退.
+        // Learning 退→推 would rewrite 后退, 退休 and every other 退 in every dictation.
+        let result = learner.extractCorrections(
+            original: "你就搂一眼，有合适的就退，没合适的就算。",
+            corrected: "你就搂一眼，有合适的就推，没合适的就算。"
         )
-        // Note: this actually writes to VocabularyStore.shared
-        // In a real test environment we'd want isolation, but for now this validates the path
-        let (terms, aliases) = learner.applyToVocabulary(result)
-        #expect(terms >= 0) // May be 0 if already exists
-        #expect(aliases >= 0)
+        #expect(result.newAliases.isEmpty)
+    }
+
+    @Test("A punctuation-only edit is not a correction")
+    func punctuationOnlyChange() {
+        let result = learner.extractCorrections(
+            original: "我们明天出发，你看行不行",
+            corrected: "我们明天出发。你看行不行"
+        )
+        #expect(result.newAliases.isEmpty)
     }
 }
