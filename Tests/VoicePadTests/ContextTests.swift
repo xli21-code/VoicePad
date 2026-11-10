@@ -53,7 +53,7 @@ struct ContextTests {
     func selectionMeansEdit() {
         let context = DictationContext(appName: "Slack", bundleID: "com.tinyspeck.slackmacgap",
                                        role: "AXTextArea", source: "focused", selectedText: "这个方案不行",
-                                       textBeforeCursor: nil, textAfterCursor: nil)
+                                       textBeforeCursor: nil, textAfterCursor: nil, selectedRange: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("Slack"))
         #expect(block.contains("AXTextArea"))
@@ -66,7 +66,7 @@ struct ContextTests {
     func beforeCursorOnly() {
         let context = DictationContext(appName: "Notes", bundleID: "com.apple.Notes",
                                        role: "AXTextArea", source: "focused", selectedText: nil,
-                                       textBeforeCursor: "上周的复盘是这样的：", textAfterCursor: nil)
+                                       textBeforeCursor: "上周的复盘是这样的：", textAfterCursor: nil, selectedRange: nil)
         let block = LLMPolisher.contextBlock(context)
         #expect(block.contains("光标前文"))
         #expect(block.contains("上周的复盘是这样的："))

@@ -4,8 +4,49 @@ import Carbon.HIToolbox
 /// Pastes text into the previously active app via Cmd+V.
 /// Saves and restores the clipboard so the user's existing content isn't lost.
 final class TextInserter {
+    /// One paste at a time: two overlapping pastes would interleave inside the target app.
+    private var pasteInFlight = false
+
+    /// When the user had text selected before dictating, the paste should replace exactly
+    /// that text. Re-selecting it here (after activation, which clears selection in some
+    /// apps) makes the edit land where the speaker meant it to.
+    private func selectOriginalRange(_ range: NSRange, expected: String, in app: NSRunningApplication) -> Bool {
+        guard AXIsProcessTrusted() else { return false }
+        let appRef = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(appRef, 0.3)
+
+        var focusedRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(appRef, kAXFocusedUIElementAttribute as CFString, &focusedRef) == .success,
+              let raw = focusedRef, CFGetTypeID(raw) == AXUIElementGetTypeID() else { return false }
+        let element = raw as! AXUIElement
+
+        // Only touch the field if the text we promised is still there.
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &valueRef) == .success,
+              let value = valueRef as? String else { return false }
+        let ns = value as NSString
+        guard range.location + range.length <= ns.length,
+              ns.substring(with: range) == expected else {
+            vpLog("[TextInserter] selection moved, pasting at the caret instead")
+            return false
+        }
+
+        var cfRange = CFRange(location: range.location, length: range.length)
+        guard let axRange = AXValueCreate(.cfRange, &cfRange) else { return false }
+        let result = AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange)
+        vpLog("[TextInserter] re-selected \(range.length)ch for replacement (ok=\(result == .success))")
+        return result == .success
+    }
+
     /// Paste text by writing to clipboard and simulating Cmd+V, then restore clipboard.
-    func paste(_ text: String, to app: NSRunningApplication?) {
+    /// `replaceRange` re-selects the text captured at key-down so the paste overwrites it.
+    func paste(_ text: String, to app: NSRunningApplication?, replaceRange: (range: NSRange, expected: String)? = nil) {
+        guard !pasteInFlight else {
+            vpLog("[TextInserter] paste already in flight, dropping this one: '\(text.prefix(30))'")
+            return
+        }
+        pasteInFlight = true
+        defer { pasteInFlight = false }
         vpLog("[TextInserter] paste called, text='\(text.prefix(50))', app=\(app?.localizedName ?? "nil")")
         let pasteboard = NSPasteboard.general
 
@@ -24,6 +65,9 @@ final class TextInserter {
 
             // Wait for activation, then simulate Cmd+V
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if let replaceRange {
+                    _ = self.selectOriginalRange(replaceRange.range, expected: replaceRange.expected, in: app)
+                }
                 vpLog("[TextInserter] simulating Cmd+V")
                 self.simulatePaste()
 

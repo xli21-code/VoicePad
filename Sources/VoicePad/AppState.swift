@@ -346,6 +346,12 @@ final class AppState {
 
         var processedText = textProcessor.process(result.transcript.text)
 
+        // Whatever the focused field looked like when the hotkey went down.
+        let dictationContext = contextHolder.take()
+        if let dictationContext {
+            vpLog("[AppState] context: app=\(dictationContext.appName ?? "-") src=\(dictationContext.source ?? "-") role=\(dictationContext.role ?? "-") selection=\(dictationContext.hasSelection ? "\(dictationContext.selectedText?.count ?? 0)ch" : "no") before=\(dictationContext.textBeforeCursor?.count ?? 0)ch")
+        }
+
         // Captured for the raw/polished training-pair log (see TrainingPairLogger).
         // rawASR stays the untouched SenseVoice output; polishedForLog is set only
         // when polish actually ran and succeeded.
@@ -367,16 +373,11 @@ final class AppState {
                 AppBranchStore.shared.resolve(bundleID: app.bundleIdentifier ?? "")?.stylePrompt
             }
 
-            let context = contextHolder.take()
-            if let context {
-                vpLog("[AppState] context: app=\(context.appName ?? "-") src=\(context.source ?? "-") role=\(context.role ?? "-") selection=\(context.hasSelection ? "\(context.selectedText?.count ?? 0)ch" : "no") before=\(context.textBeforeCursor?.count ?? 0)ch")
-            }
-
             if let polished = await llmPolisher.polish(
                 processedText,
                 dictionaryTerms: dictionaryTerms,
                 appBranchPrompt: branchPrompt,
-                context: context
+                context: dictationContext
             ) {
                 polishedForLog = polished
                 processedText = polished
@@ -422,7 +423,13 @@ final class AppState {
             phase = .done(processedText)
             updateOverlay()
             vpLog("[AppState] pasting to app: \(previousApp?.localizedName ?? "nil")")
-            textInserter.paste(processedText, to: previousApp)
+            // A selection captured at key-down means the speaker was editing that text.
+            let replace: (range: NSRange, expected: String)? = {
+                guard let dictationContext, let range = dictationContext.selectedRange,
+                      let selected = dictationContext.selectedText, range.length > 0 else { return nil }
+                return (range, selected)
+            }()
+            textInserter.paste(processedText, to: previousApp, replaceRange: replace)
             lastPastedText = processedText
             lastPasteTime = Date()
 

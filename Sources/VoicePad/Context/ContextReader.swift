@@ -17,12 +17,14 @@ struct DictationContext {
     let selectedText: String?
     let textBeforeCursor: String?
     let textAfterCursor: String?
+    /// Caret/selection range in the field, so the paste can replace exactly that text.
+    let selectedRange: NSRange?
 
     var hasSelection: Bool { !(selectedText?.isEmpty ?? true) }
 
     static let empty = DictationContext(appName: nil, bundleID: nil, role: nil, source: nil,
                                         selectedText: nil, textBeforeCursor: nil,
-                                        textAfterCursor: nil)
+                                        textAfterCursor: nil, selectedRange: nil)
 }
 
 /// Holds the context captured at key-down until the transcript is ready.
@@ -87,7 +89,8 @@ enum ContextReader {
             source: source,
             selectedText: info.selected.map { clip($0, maxSelected) },
             textBeforeCursor: info.before,
-            textAfterCursor: info.after
+            textAfterCursor: info.after,
+            selectedRange: info.range
         )
     }
 
@@ -141,18 +144,20 @@ enum ContextReader {
         let selected: String?
         let before: String?
         let after: String?
+        let range: NSRange?
     }
 
     private static func textInfo(of element: AXUIElement) -> TextInfo {
         guard let value = string(element, kAXValueAttribute), !value.isEmpty else {
-            return TextInfo(value: nil, selected: nil, before: nil, after: nil)
+            return TextInfo(value: nil, selected: nil, before: nil, after: nil, range: nil)
         }
         guard let range = selectedRange(of: element) else {
-            return TextInfo(value: value, selected: nil, before: nil, after: nil)
+            return TextInfo(value: value, selected: nil, before: nil, after: nil, range: nil)
         }
         let (before, after) = slices(from: value, selectedRange: range,
                                      maxBefore: maxBefore, maxAfter: maxAfter)
-        return TextInfo(value: value, selected: selectedSlice(from: value, range: range), before: before, after: after)
+        return TextInfo(value: value, selected: selectedSlice(from: value, range: range),
+                        before: before, after: after, range: range)
     }
 
     /// The selected substring, taken from the field value + range. More reliable than
