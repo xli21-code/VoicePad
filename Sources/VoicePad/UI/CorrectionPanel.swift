@@ -28,6 +28,7 @@ final class CorrectionPanel {
         textView.string = text
         textView.selectAll(nil)
         positionPanel()
+        vpLog("[CorrectionPanel] showing and activating (steals focus from the target app)")
         panel.makeKeyAndOrderFront(nil)
         panel.makeFirstResponder(textView)
         NSApp.activate(ignoringOtherApps: true)

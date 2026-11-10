@@ -158,8 +158,11 @@ final class HotkeyMonitor {
             currentKeyDownTime = Date()
             longPressTimer?.invalidate()
 
-            // Start long-press timer (only when not recording)
-            if !isRecordingActive {
+            // Long-press correction is opt-in: it fires after 0.6 s of holding the hotkey,
+            // which is exactly what a push-to-talk user does while thinking. It then steals
+            // focus with a panel, which looks like "something popped up" mid-sentence.
+            let longPressEnabled = UserDefaults.standard.bool(forKey: "longPressCorrection")
+            if longPressEnabled, !isRecordingActive {
                 longPressTimer = Timer.scheduledTimer(withTimeInterval: longPressDuration, repeats: false) { [weak self] _ in
                     guard let self, self.isKeyDown, !self.otherKeyPressed else { return }
                     vpLog("[HotkeyMonitor] Long press detected → CORRECTION")
