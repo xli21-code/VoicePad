@@ -12,6 +12,8 @@ struct APISettingsView: View {
     @State private var remoteModels: [RemoteModel] = []
     @State private var profiles: [APIProfile] = []
     @State private var selectedProfile = ""
+    @State private var showModelPicker = false
+    @State private var pickerSearch = ""
 
     private enum TestStatus {
         case idle, testing, success, error
@@ -74,13 +76,36 @@ struct APISettingsView: View {
                 }
 
                 LabeledContent("Base URL") {
-                    TextField("https://api.anthropic.com (default)", text: $baseURL)
-                        .textFieldStyle(.roundedBorder)
+                    HStack(spacing: 6) {
+                        TextField("https://api.anthropic.com (default)", text: $baseURL)
+                            .textFieldStyle(.roundedBorder)
+                        Button("Detect Magpie") {
+                            baseURL = "http://127.0.0.1:3425"
+                            testConnection()
+                        }
+                        .help("Point at the local gateway and load its model list")
+                    }
                 }
 
-                modelRow("Polish model", $model)
-                modelRow("Translation model", $translateModel)
-                modelRow("Import model", $importModel)
+                LabeledContent("Model") {
+                    HStack(spacing: 8) {
+                        Text(model.isEmpty ? "—" : model)
+                            .font(.caption.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .foregroundStyle(model.isEmpty ? .secondary : .primary)
+                        Spacer(minLength: 4)
+                        Button("Choose…") { showModelPicker = true }
+                            .disabled(remoteModels.isEmpty)
+                            .help(remoteModels.isEmpty ? "Test the connection first" : "Pick from the gateway's models")
+                    }
+                }
+
+                DisclosureGroup("Per-role overrides") {
+                    modelRow("Translation", $translateModel)
+                    modelRow("Vocabulary import", $importModel)
+                }
+                .font(.callout)
             } header: {
                 Text("LLM API Configuration")
                     .font(.headline)
@@ -126,6 +151,9 @@ struct APISettingsView: View {
         .formStyle(.grouped)
         .padding()
         .onAppear { loadConfig(); loadProfiles() }
+        .sheet(isPresented: $showModelPicker) {
+            modelPickerSheet
+        }
     }
 
     private func loadConfig() {
@@ -135,6 +163,52 @@ struct APISettingsView: View {
         model = config.model
         translateModel = config.translateModel
         importModel = config.importModel
+    }
+
+    private var filteredModels: [RemoteModel] {
+        let q = pickerSearch.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return remoteModels }
+        return remoteModels.filter {
+            $0.id.lowercased().contains(q) || ($0.displayName ?? "").lowercased().contains(q)
+                || $0.ownedBy.lowercased().contains(q)
+        }
+    }
+
+    private var modelPickerSheet: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            TextField("Search models", text: $pickerSearch)
+                .textFieldStyle(.roundedBorder)
+                .padding(12)
+
+            List(filteredModels) { remote in
+                Button {
+                    model = remote.id
+                    showModelPicker = false
+                } label: {
+                    HStack(alignment: .firstTextBaseline) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(remote.displayName ?? remote.id).font(.callout)
+                            Text(remote.id).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Text(remote.ownedBy).font(.caption2).foregroundStyle(.tertiary)
+                        if remote.id == model {
+                            Image(systemName: "checkmark").font(.caption)
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            .frame(minWidth: 460, minHeight: 380)
+
+            HStack {
+                Spacer()
+                Button("Cancel") { showModelPicker = false }
+            }
+            .padding(12)
+        }
+        .frame(width: 520, height: 480)
     }
 
     /// One row per LLM role. A plain text field keeps long gateway ids (e.g.
