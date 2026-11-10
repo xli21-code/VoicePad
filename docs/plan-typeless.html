@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 15:20",
+  updated: "2026-11-10 16:10",
   range: { start: "2026-11-09", end: "2026-11-25" },
   today: "2026-11-09",
   phases: [
@@ -226,7 +226,7 @@ const PLAN = {
 
     { id: "T20", phase: "P5", title: "hotwords 注入 ASR", note: "基线证明这是最高杠杆：术语 60% 存活", start: "2026-11-26", end: "2026-11-27", status: "planned" },
     { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "分支语气已注入 prompt；周报评测未做", start: "2026-11-19", end: "2026-11-22", status: "doing" },
-    { id: "T23", phase: "P0", title: "回归评测一键跑", note: "改 prompt / 换模型后跑 37 条防退化", start: "2026-11-11", end: "2026-11-12", status: "planned" },
+    { id: "T23", phase: "P0", title: "回归评测一键跑", note: "scripts/regress.py；5 道 gate 全绿，基线已存", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "RMS 过低或输出仅标点 → 不出字", start: "2026-11-11", end: "2026-11-11", status: "planned" },
     { id: "T22", phase: "P5", title: "纠错学习合入词表", note: "现只有 4 词 / 11 别名，等于没启用", start: "2026-11-14", end: "2026-11-15", status: "planned" },
     { id: "T29", phase: "P5", title: "词表粘贴导入", note: "一次粘贴多行/多词，自动去重", start: "2026-11-15", end: "2026-11-16", status: "planned" },

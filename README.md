@@ -77,6 +77,19 @@ open /Applications/VoicePad.app
 - 菜单栏可切换 Smart Polish / Translation 开关
 - 30 分钟无操作自动休眠，下次录音时自动唤醒
 
+## 回归评测（改 prompt / 换模型之后必跑）
+
+```bash
+swift build && ./scripts/build_app.sh        # 让被测的二进制是最新的
+python3 scripts/regress.py                   # 跑一遍，任何 gate FAIL 就退出码 1
+python3 scripts/regress.py --limit 15        # 快速版
+python3 scripts/regress.py --update-baseline # 确认改进之后才更新基线
+```
+
+它把 App 自己的 system prompt dump 出来（`VoicePad --dump-polish-prompt`），所以测的一定是线上
+在用的那份 prompt，不会和代码漂移。指标：失败率、疑似掉内容（已排除自我纠正）、术语保留率、
+残留填充词、是否擅自加结构化、p50/p90。基线在 `~/.voicepad/eval/regress_baseline.json`。
+
 ## 更新部署
 
 ```bash
