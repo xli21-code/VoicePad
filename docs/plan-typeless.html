@@ -120,10 +120,10 @@
   <header class="page">
     <div class="eyebrow">VoicePad · 迭代计划</div>
     <h1>从「本地批处理」到 Typeless 级语音输入</h1>
-    <p class="sub">质量优先路线：模型统一走 Magpie 网关（0 元本地主力 + 按需升档），ASR 换成「流式预览 + 停顿定稿 + 长句重解码」两段式，落字改 AX 直写。Typeless 实测 0.9–1.1s，我们以「松手 ≤1.2s 定稿、说话时可见字」为验收线。隐私分档（敏感 app 强制本地 / 读前黑名单）按你的决定移出本轮，见文末「暂缓」。</p>
+    <p class="sub">质量优先路线：模型统一走 Magpie 网关（0 元本地主力 + 按需升档），ASR 已换 Whisper turbo + 术语 prompt（「流式预览 + 停顿定稿 + 长句重解码」两段式已暂缓，见文末），落字目标是 AX 直写——现在还只有剪贴板一条通用路径。Typeless 实测 0.9–1.1s，我们以「松手 ≤1.2s 定稿」为验收线（「说话时可见字」随流式一起暂缓）。隐私分档（敏感 app 强制本地 / 读前黑名单）按你的决定移出本轮，见文末「暂缓」。</p>
     <div class="meta">
       <span class="chip">周期 <b>11-09 → 11-25</b></span>
-      <span class="chip">分支 <b>6 条</b></span>
+      <span class="chip">分支 <b>0 条</b>（实际直推 main）</span>
       <span class="chip">里程碑 <b>6 个</b></span>
       <span class="chip warn">需你处理 <b id="chip-user">0</b> 项</span>
       <span class="chip">卡点 <b id="chip-block">0</b> 项</span>
@@ -172,7 +172,7 @@
   <h2>合并纪律</h2>
   <div class="card list">
     <div class="item"><span class="dot grey"></span><div class="body"><b>AppState.swift 是热文件</b><p>P2/P3/P4 都要改它，直接在原文件上并行必冲突。P1 结束前先抽出 <span class="mono">DictationPipeline</span>（录音→ASR→改写→落字 的协议化管线），之后每个阶段只实现自己的协议。</p></div></div>
-    <div class="item"><span class="dot grey"></span><div class="body"><b>合入门槛 = 基线不退化</b><p>每个分支合并前跑一次 <span class="mono">bench</span>：CER（对照集）、端到端 p50/p90、单次成本。任何一项退化超过 5% 不合。</p></div></div>
+    <div class="item"><span class="dot grey"></span><div class="body"><b>合入门槛 = 基线不退化</b><p>每个分支合并前跑一次 <span class="mono">bench</span>：CER（对照集）、端到端 p50/p90、单次成本。任何一项退化超过 5% 不合。成本口径：网关 <span class="mono">/v1/models</span> 的报价 × 本次 <span class="mono">usage</span> token（cache-read 按缓存价），本地 ASR 边际成本计 0；网关不报价的模型只报 token、不开 gate。</p></div></div>
     <div class="item"><span class="dot grey"></span><div class="body"><b>分支存活 ≤ 5 天</b><p>超时就把剩余工作拆成新分支，避免长期分支与主线脱节。</p></div></div>
   </div>
 
@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 04:20",
+  updated: "2026-11-10 04:12",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -202,7 +202,7 @@ const PLAN = {
     { id: "T0", phase: "P0", title: "提交并推送既有纠错改动", note: "24 tests，origin/main 已同步", start: "2026-11-09", end: "2026-11-09", status: "done" },
     { id: "T1", phase: "P0", title: "录音归档（audio 与 history 关联）", note: "WAV 落 ~/.voicepad/audio/，pairs.jsonl 记 audio_file", start: "2026-11-09", end: "2026-11-10", status: "done" },
     { id: "T2", phase: "P0", title: "对照集 30–50 条", note: "37 条已入库，WAV 全部校验通过", start: "2026-11-09", end: "2026-11-10", status: "done" },
-    { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "基线已出 CER 16.5% / 术语 60%，待接更多引擎", start: "2026-11-10", end: "2026-11-12", status: "doing" },
+    { id: "T3", phase: "P0", title: "bench：CER / 延迟 / 成本", note: "CER 16.5%→13.5%（turbo+prompt）、p50 698ms、$0.05/千次；单价读网关 /v1/models，本地 ASR 边际 0", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "M0", phase: "P0", milestone: true, title: "评测可跑", start: "2026-11-13", end: "2026-11-13" },
 
     { id: "T4", phase: "P1", title: "config v2 + 按角色分模型", note: "本机已切 Magpie，35 tests", start: "2026-11-09", end: "2026-11-09", status: "done" },

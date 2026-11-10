@@ -10,6 +10,7 @@ the code) over real dictations and checks the things that broke in practice:
   - filler left over
   - structure invented: lists/headings appearing before formatting is enabled
   - latency
+  - cost: tokens and dollars per dictation, priced by the gateway's own model table
 
 Usage:
   python3 scripts/regress.py                    # check against the stored baseline
@@ -66,6 +67,47 @@ def filler_count(s: str) -> int:
     return len(re.findall(r"[呃嗯哦噢]|然后然后|就是就是|那个那个", s))
 
 
+def load_pricing(cfg):
+    """Per-token prices for the polish model, read from the gateway's own /v1/models.
+
+    The gateway already knows what each model costs, so there is no price table here to
+    rot. A model the gateway cannot price returns None: tokens are still counted, cost
+    is reported as unknown instead of as zero.
+    """
+    try:
+        with urllib.request.urlopen(cfg["base_url"] + "/v1/models", timeout=15) as resp:
+            data = json.loads(resp.read())
+    except Exception:
+        return None
+    for m in data.get("data") or []:
+        if m.get("id") == cfg["model"]:
+            p = m.get("pricing") or {}
+            try:
+                return {"prompt": float(p["prompt"]),
+                        "completion": float(p["completion"]),
+                        "cache_read": float(p["input_cache_read"])}
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
+
+
+def item_cost(usage, price):
+    """(fresh_in, cached_in, out) tokens and dollars for one call.
+
+    Cached prompt tokens are billed at the cache-read rate; the rest at the full prompt
+    rate. Without a cache price they are conservatively priced as fresh.
+    """
+    ptok = int(usage.get("prompt_tokens") or 0)
+    ctok = int(usage.get("completion_tokens") or 0)
+    cached = int((usage.get("prompt_tokens_details") or {}).get("cached_tokens") or 0)
+    cached = min(cached, ptok)
+    if not price:
+        return ptok - cached, cached, ctok, None
+    cache_price = price.get("cache_read") or price["prompt"]
+    cost = (ptok - cached) * price["prompt"] + cached * cache_price + ctok * price["completion"]
+    return ptok - cached, cached, ctok, cost
+
+
 def load_config():
     with open(CONFIG) as f:
         cfg = json.load(f)
@@ -106,19 +148,21 @@ def call_polish(cfg, prompt: str, text: str, timeout=90):
         data = json.loads(resp.read())
     latency = time.time() - started
     choice = data["choices"][0]
-    return (choice["message"].get("content") or "").strip(), latency, choice.get("finish_reason")
+    return ((choice["message"].get("content") or "").strip(), latency,
+            choice.get("finish_reason"), data.get("usage") or {})
 
 
-def evaluate(items, cfg, prompt):
+def evaluate(items, cfg, prompt, price=None):
     rows = []
     for item in items:
         raw = item["raw_asr"]
         try:
-            out, latency, finish = call_polish(cfg, prompt, raw)
+            out, latency, finish, usage = call_polish(cfg, prompt, raw)
         except Exception as exc:                      # network / model errors count as failures
             rows.append({"raw": raw, "out": "", "error": str(exc)[:120], "latency": None, "failed": True})
             continue
 
+        fresh_in, cached_in, out_tokens, cost = item_cost(usage, price)
         s_in, s_out = squash(raw), squash(out)
         terms = english_terms(raw)
         term_hits = sum(1 for t in terms if t in out.lower())
@@ -140,6 +184,9 @@ def evaluate(items, cfg, prompt):
             "term_hits": term_hits,
             "fillers": filler_count(out),
             "structure_added": bool(LIST_MARK.search(out)) and not LIST_MARK.search(raw),
+            "tokens_in": fresh_in + cached_in,
+            "tokens_out": out_tokens,
+            "cost": cost,
         })
     return rows
 
@@ -148,6 +195,11 @@ def summarize(rows):
     lat = sorted(r["latency"] for r in rows if r["latency"])
     terms = sum(r.get("terms", 0) for r in rows)
     hits = sum(r.get("term_hits", 0) for r in rows)
+    tin = sorted(r["tokens_in"] for r in rows if r.get("tokens_in") is not None)
+    tout = sorted(r["tokens_out"] for r in rows if r.get("tokens_out") is not None)
+    costs = [r["cost"] for r in rows if r.get("cost") is not None]
+    med = lambda xs: round(statistics.median(xs)) if xs else None
+    cost_per_call = round(sum(costs) / len(costs), 6) if costs else None
     return {
         "items": len(rows),
         "failures": sum(1 for r in rows if r.get("failed")),
@@ -160,6 +212,11 @@ def summarize(rows):
         "term_rate": round(hits / terms, 3) if terms else 1.0,
         "fillers_left": sum(r.get("fillers", 0) for r in rows),
         "structure_added": sum(1 for r in rows if r.get("structure_added")),
+        "tokens_in_p50": med(tin),
+        "tokens_out_p50": med(tout),
+        # Local ASR has no marginal dollar cost; this is the LLM leg only.
+        "cost_per_dictation_usd": cost_per_call,
+        "cost_per_1k_usd": round(cost_per_call * 1000, 4) if cost_per_call is not None else None,
         "p50_ms": round(statistics.median(lat) * 1000) if lat else 0,
         "p90_ms": round(lat[int(len(lat) * 0.9) - 1] * 1000) if lat else 0,
     }
@@ -174,6 +231,13 @@ def gates(cur, base):
     checks.append(("未擅自加结构化", cur["structure_added"] == 0, str(cur["structure_added"])))
     allowed = base["p50_ms"] * 1.5 + 200
     checks.append((f"p50 ≤ {allowed:.0f}ms", cur["p50_ms"] <= allowed, f"{cur['p50_ms']}ms"))
+    # Cost moves for reasons quality metrics miss: a longer prompt, a chattier model, a
+    # dropped cache hit. Only gated when both sides are priced — an unpriced model is
+    # reported, not silently treated as free.
+    if cur.get("cost_per_dictation_usd") is not None and base.get("cost_per_dictation_usd"):
+        cap = base["cost_per_dictation_usd"] * 1.05
+        checks.append((f"单次成本 ≤ baseline+5%", cur["cost_per_dictation_usd"] <= cap,
+                       f"${cur['cost_per_dictation_usd']:.6f} vs ${base['cost_per_dictation_usd']:.6f}"))
     return checks
 
 
@@ -199,6 +263,7 @@ def main():
         sys.exit("build the app first: swift build")
 
     cfg = load_config()
+    price = load_pricing(cfg)
     prompt = dump_prompt(binary)
     cfg["prompt_sha"] = hashlib.sha256(prompt.encode()).hexdigest()[:12]
 
@@ -207,9 +272,10 @@ def main():
     if args.limit:
         items = items[-args.limit:]
 
-    rows = evaluate(items, cfg, prompt)
+    rows = evaluate(items, cfg, prompt, price)
     cur = summarize(rows)
-    cur.update({"model": cfg["model"], "prompt_sha": cfg["prompt_sha"], "updated": time.strftime("%Y-%m-%d %H:%M")})
+    cur.update({"model": cfg["model"], "prompt_sha": cfg["prompt_sha"],
+                "priced": price is not None, "updated": time.strftime("%Y-%m-%d %H:%M")})
 
     base = None
     if os.path.exists(BASELINE):
@@ -226,6 +292,12 @@ def main():
               f"术语 {cur['term_hits']}/{cur['terms']} = {cur['term_rate']:.0%}")
         print(f"  残留填充词 {cur['fillers_left']}   擅自加结构 {cur['structure_added']}   "
               f"p50 {cur['p50_ms']}ms  p90 {cur['p90_ms']}ms")
+        if cur["cost_per_dictation_usd"] is None:
+            print(f"  成本：未知（网关未给 {cur['model']} 报价）；"
+                  f"输入 {cur['tokens_in_p50']} tok / 输出 {cur['tokens_out_p50']} tok（中位）")
+        else:
+            print(f"  成本 ${cur['cost_per_dictation_usd']:.6f}/次 = ${cur['cost_per_1k_usd']:.2f}/千次"
+                  f"   输入 {cur['tokens_in_p50']} tok / 输出 {cur['tokens_out_p50']} tok（中位）")
         if base:
             if base.get("prompt_sha") != cur["prompt_sha"]:
                 print(f"  （prompt 有变化：{base.get('prompt_sha')} → {cur['prompt_sha']}）")
