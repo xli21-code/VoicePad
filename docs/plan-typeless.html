@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 04:50",
+  updated: "2026-11-10 05:05",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -238,7 +238,7 @@ const PLAN = {
     { id: "T31", phase: "P5", title: "自动提议新词", note: "从历史里找高频、未收录的英文词，一键采纳", start: "2026-11-16", end: "2026-11-17", status: "planned" },
     { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-11-17", end: "2026-11-17" },
 
-    { id: "T26", phase: "P6", title: "输出格式策略（按 app）", note: "聊天=纯文本 / 文档=可分段 / 代码=不粉饰", start: "2026-11-18", end: "2026-11-19", status: "planned" },
+    { id: "T26", phase: "P6", title: "输出格式策略（按 app）", note: "按 bundle id 自动分类 chat/document/code/email/neutral，格式自动、语气仍手配；regress 加 --contract，三档实测掉内容 0、术语 83–85%、p50 ~708ms", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T27", phase: "P6", title: "放开结构化 + 内容守护", note: "允许列表/分段，但禁止编造与增删事实", start: "2026-11-19", end: "2026-11-21", status: "planned" },
     { id: "T28", phase: "P6", title: "语音格式指令", note: "「分三点」「写成邮件」「缩成两句」", start: "2026-11-21", end: "2026-11-23", status: "planned" },
     { id: "M6", phase: "P6", milestone: true, title: "结构化输出可用", start: "2026-11-23", end: "2026-11-23" },

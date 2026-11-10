@@ -385,11 +385,16 @@ final class AppState {
                 AppBranchStore.shared.resolve(bundleID: app.bundleIdentifier ?? "")?.stylePrompt
             }
 
+            // Shape comes from the app, not from configuration: a terminal is a terminal.
+            let contract = OutputContract.forApp(bundleID: previousApp?.bundleIdentifier
+                                                ?? dictationContext?.bundleID)
+
             if let polished = await llmPolisher.polish(
                 processedText,
                 dictionaryTerms: dictionaryTerms,
                 appBranchPrompt: branchPrompt,
-                context: dictationContext
+                context: dictationContext,
+                contract: contract
             ) {
                 polishedForLog = polished
                 processedText = polished

@@ -349,7 +349,8 @@ final class LLMPolisher {
     /// Polish raw transcription into structured text via Claude API.
     /// Returns the polished text, or nil if polishing fails.
     func polish(_ text: String, dictionaryTerms: [String] = [], appBranchPrompt: String? = nil,
-                context: DictationContext? = nil) async -> String? {
+                context: DictationContext? = nil,
+                contract: OutputContract = .neutral) async -> String? {
         let config = loadConfig()
         guard let apiKey = config.effectiveAPIKey else {
             vpLog("[LLMPolisher] No API key found")
@@ -367,7 +368,8 @@ final class LLMPolisher {
 
         let systemPrompt = buildSystemPrompt(dictionaryTerms: dictionaryTerms,
                                              appBranchPrompt: appBranchPrompt,
-                                             context: context)
+                                             context: context,
+                                             contract: contract)
 
         do {
             let result = try await callLLM(config: config, apiKey: apiKey, model: config.model, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
@@ -475,7 +477,8 @@ final class LLMPolisher {
     /// edited without hunting through the others, and the self-check list is the prompt-side
     /// twin of the gates in scripts/regress.py.
     private func buildSystemPrompt(dictionaryTerms: [String], appBranchPrompt: String?,
-                                  context: DictationContext? = nil) -> String {
+                                  context: DictationContext? = nil,
+                                  contract: OutputContract = .neutral) -> String {
         var sections: [String] = []
 
         sections.append("""
@@ -533,13 +536,7 @@ final class LLMPolisher {
             sections.append(Self.contextBlock(context))
         }
 
-        sections.append("""
-        ## 输出契约
-        - 直接输出整理后的文本，不要任何前缀（如"好的""以下是"）、后缀或解释
-        - 纯文本：不加标题、列表符号、加粗或 Markdown
-        - 不要用引号或代码块把整段结果包起来
-        - 不要输出 JSON 或字段名
-        """)
+        sections.append(contract.promptSection)
 
         sections.append("""
         ## 自检（输出前快速过一遍）
@@ -555,8 +552,9 @@ final class LLMPolisher {
 
     /// The polish prompt without dictionary or app-branch additions, for the regression
     /// harness (`VoicePad --dump-polish-prompt`).
-    static func debugPolishPrompt() -> String {
-        LLMPolisher().buildSystemPrompt(dictionaryTerms: [], appBranchPrompt: nil, context: nil)
+    static func debugPolishPrompt(contract: OutputContract = .neutral) -> String {
+        LLMPolisher().buildSystemPrompt(dictionaryTerms: [], appBranchPrompt: nil,
+                                        context: nil, contract: contract)
     }
 
     /// The field the user was in, and the text around the caret. Kept separate from the rules

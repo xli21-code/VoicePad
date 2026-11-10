@@ -20,8 +20,14 @@ func vpLog(_ msg: String) {
 // Debug/regression hook: print the exact system prompt the polisher would send, so the
 // evaluation harness measures the shipped prompt instead of a stale copy of it.
 if CommandLine.arguments.contains("--dump-polish-prompt") {
+    // `--contract <name>` lets the harness check a per-app contract, not just the default.
+    let args = CommandLine.arguments
+    let contract = args.firstIndex(of: "--contract").flatMap { index -> OutputContract? in
+        guard index + 1 < args.count else { return nil }
+        return OutputContract(rawValue: args[index + 1])
+    } ?? .neutral
     // FileHandle writes are unbuffered; print() would be lost when stdout is a pipe.
-    FileHandle.standardOutput.write(Data(LLMPolisher.debugPolishPrompt().utf8))
+    FileHandle.standardOutput.write(Data(LLMPolisher.debugPolishPrompt(contract: contract).utf8))
     exit(0)
 }
 

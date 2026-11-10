@@ -120,11 +120,12 @@ def load_config():
     }
 
 
-def dump_prompt(binary: str) -> str:
+def dump_prompt(binary: str, contract: str = "neutral") -> str:
     env = dict(os.environ)
     # The bare .build binaries need the bundled dylibs on the loader path.
     env["DYLD_LIBRARY_PATH"] = os.path.abspath("Frameworks/sherpa-onnx/lib")
-    out = subprocess.run([binary, "--dump-polish-prompt"], capture_output=True, text=True,
+    out = subprocess.run([binary, "--dump-polish-prompt", "--contract", contract],
+                         capture_output=True, text=True,
                          timeout=60, env=env)
     if out.returncode != 0 or not out.stdout.strip():
         sys.exit(f"could not dump the polish prompt from {binary}: {out.stderr[:200]}")
@@ -234,7 +235,10 @@ def gates(cur, base):
     # Cost moves for reasons quality metrics miss: a longer prompt, a chattier model, a
     # dropped cache hit. Only gated when both sides are priced — an unpriced model is
     # reported, not silently treated as free.
-    if cur.get("cost_per_dictation_usd") is not None and base.get("cost_per_dictation_usd"):
+    # Only comparable against a baseline measured with the same contract: a code or
+    # document contract is a different prompt by design, not a cost regression.
+    if (cur.get("cost_per_dictation_usd") is not None and base.get("cost_per_dictation_usd")
+            and cur.get("contract") == base.get("contract")):
         cap = base["cost_per_dictation_usd"] * 1.05
         checks.append((f"单次成本 ≤ baseline+5%", cur["cost_per_dictation_usd"] <= cap,
                        f"${cur['cost_per_dictation_usd']:.6f} vs ${base['cost_per_dictation_usd']:.6f}"))
@@ -247,6 +251,9 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="only the most recent N items")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--contract", default="neutral",
+                    choices=["neutral", "chat", "document", "code", "email"],
+                    help="check a per-app output contract instead of the default")
     args = ap.parse_args()
 
     binary = args.binary
@@ -264,7 +271,7 @@ def main():
 
     cfg = load_config()
     price = load_pricing(cfg)
-    prompt = dump_prompt(binary)
+    prompt = dump_prompt(binary, args.contract)
     cfg["prompt_sha"] = hashlib.sha256(prompt.encode()).hexdigest()[:12]
 
     items = [json.loads(l) for l in open(PAIRS, encoding="utf-8") if l.strip()]
@@ -274,7 +281,7 @@ def main():
 
     rows = evaluate(items, cfg, prompt, price)
     cur = summarize(rows)
-    cur.update({"model": cfg["model"], "prompt_sha": cfg["prompt_sha"],
+    cur.update({"model": cfg["model"], "prompt_sha": cfg["prompt_sha"], "contract": args.contract,
                 "priced": price is not None, "updated": time.strftime("%Y-%m-%d %H:%M")})
 
     base = None
@@ -287,7 +294,8 @@ def main():
                           "rows": rows}, ensure_ascii=False, indent=2))
     else:
         print(f"binary: {binary}")
-        print(f"model: {cur['model']}   prompt: {cur['prompt_sha']}   items: {cur['items']}")
+        print(f"model: {cur['model']}   prompt: {cur['prompt_sha']}   items: {cur['items']}"
+              f"   contract: {args.contract}")
         print(f"  失败 {cur['failures']}/{cur['items']}   原样返回 {cur['unchanged']}   掉内容 {cur['content_lost']}   "
               f"术语 {cur['term_hits']}/{cur['terms']} = {cur['term_rate']:.0%}")
         print(f"  残留填充词 {cur['fillers_left']}   擅自加结构 {cur['structure_added']}   "
@@ -301,6 +309,8 @@ def main():
         if base:
             if base.get("prompt_sha") != cur["prompt_sha"]:
                 print(f"  （prompt 有变化：{base.get('prompt_sha')} → {cur['prompt_sha']}）")
+            if args.contract != base.get("contract", "neutral"):
+                print(f"\n（成本 gate 跳过：本次 contract={args.contract}，基线 contract={base.get('contract', 'neutral')}）")
             print("\ngates:")
             for name, ok, value in checks:
                 print(f"  {'PASS' if ok else 'FAIL'}  {name}  [{value}]")
