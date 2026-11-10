@@ -122,6 +122,14 @@ struct LLMPolisherTests {
         #expect(!LLMPolisher.isUsableOutput("[]", for: "这句话需要整理", checkLength: true))
     }
 
+    @Test("A short utterance may not lose its tail to cleanup")
+    func shortUtteranceKeepsContent() {
+        // Real case: "可以了还不会了" was rewritten to "可以了", deleting the second half.
+        #expect(!LLMPolisher.isUsableOutput("可以了。", for: "可以了还不会了。"))
+        // Removing a leading filler is still fine.
+        #expect(LLMPolisher.isUsableOutput("这个方案不行。", for: "嗯嗯这个方案不行。"))
+    }
+
     @Test("Normal rewrite is accepted")
     func normalRewriteAccepted() {
         let input = "um so this is the thing that I actually wanted to say about the API gateway"

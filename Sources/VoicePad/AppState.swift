@@ -344,6 +344,18 @@ final class AppState {
         }
         vpLog("[AppState] transcription result (\(result.engine)): '\(result.transcript.text)' lang=\(result.transcript.language ?? "nil")")
 
+        // A transcript that is only punctuation means the decoder heard noise, not speech.
+        let lettersOnly = result.transcript.text.filter { $0.isLetter || $0.isNumber }
+        if lettersOnly.isEmpty {
+            vpLog("[AppState] transcript has no letters/numbers, treating as silence: '\(result.transcript.text)'")
+            await MainActor.run {
+                phase = .error("没听到")
+                updateOverlay()
+            }
+            scheduleIdleReset(after: 2)
+            return
+        }
+
         var processedText = textProcessor.process(result.transcript.text)
 
         // Whatever the focused field looked like when the hotkey went down.
