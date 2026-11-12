@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-12 06:20",
+  updated: "2026-11-12 07:05",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -220,6 +220,7 @@ const PLAN = {
     { id: "T12", phase: "P3", title: "ASREngine 协议 + WhisperKit 接线", note: "已装；ANE 会卡死，改 cpuAndGPU 后 17s 加载", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T13", phase: "P3", title: "候选引擎横评（37 条真录音）", note: "turbo+prompt 胜出：CER 13.5% / 术语 87%；large-v3 RTF≈1.0 出局", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T20", phase: "P3", title: "繁简归一", note: "ICU Traditional-Simplified，短语感知（著名/看著 不乱改）；7 条单测；放在改写之前", start: "2026-11-10", end: "2026-11-10", status: "done" },
+    { id: "T36", phase: "P3", title: "长语音丢尾巴", note: "根因不是 VAD 也不是 no-speech 门：窗口起点落在硬边界时 Whisper 立刻吐 EOT，而 WhisperKit 自己切的块失败/为空会被静默丢弃。改成自己按 30s 切、切点选静音处、超 30s 绝不外放，空窗且有声就 +1s/+2s 重试；3 条真实录音的尾巴全部回来（42.2s：87→166 字，35.2s：88→145，48.8s：185→170 但结尾完整）；5 条窗口单测；polish 的 maxTokens 也改成随输入长度缩放（固定 1024 会把长口述截在句中）", start: "2026-11-12", end: "2026-11-12", status: "done" },
     { id: "M3", phase: "P3", milestone: true, title: "术语不再崩坏", start: "2026-11-13", end: "2026-11-13" },
 
     { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "剪贴板+Cmd+V 仍是唯一通用路径；AXValue 只用在纠错替换上", start: "2026-11-14", end: "2026-11-17", status: "planned" },

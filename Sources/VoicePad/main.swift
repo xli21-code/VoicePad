@@ -1,5 +1,7 @@
 import AppKit
+import AVFoundation
 import Foundation
+import WhisperKit
 
 // VoicePad — macOS Voice-to-Text Menu Bar App
 // Push-to-talk: hold Control to record, release to transcribe and paste.
@@ -29,6 +31,57 @@ if CommandLine.arguments.contains("--dump-polish-prompt") {
     // FileHandle writes are unbuffered; print() would be lost when stdout is a pipe.
     FileHandle.standardOutput.write(Data(LLMPolisher.debugPolishPrompt(contract: contract).utf8))
     exit(0)
+}
+
+// Diagnostic hook: transcribe an archived WAV. Exists because "the tail of long dictations
+// goes missing" could not be reproduced without replaying the exact recording, and because a
+// silent empty window is invisible from inside the app.
+if let flag = CommandLine.arguments.firstIndex(of: "--transcribe"), flag + 1 < CommandLine.arguments.count {
+    transcribeProbe(path: CommandLine.arguments[flag + 1])
+    exit(0)
+}
+
+/// Reads a 16 kHz mono WAV and prints the window layout, timing and transcript.
+func transcribeProbe(path: String) {
+    let samples: [Float]
+    do {
+        let file = try AVAudioFile(forReading: URL(fileURLWithPath: path))
+        guard file.processingFormat.sampleRate == 16000, file.processingFormat.channelCount == 1,
+              let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                            frameCapacity: AVAudioFrameCount(file.length)) else {
+            FileHandle.standardError.write(Data("expected 16 kHz mono float PCM at \(path)\n".utf8))
+            return
+        }
+        try file.read(into: buffer)
+        guard let channel = buffer.floatChannelData?[0] else { return }
+        samples = Array(UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+    } catch {
+        FileHandle.standardError.write(Data("cannot read \(path): \(error)\n".utf8))
+        return
+    }
+
+    let spans = WhisperKitEngine.windows(of: samples).map { range -> String in
+        String(format: "%.1f-%.1f(%.1fs)", Double(range.lowerBound) / 16000,
+               Double(range.upperBound) / 16000, Double(range.count) / 16000)
+    }
+    FileHandle.standardError.write(Data("windows: \(spans.joined(separator: "  "))\n".utf8))
+
+    let engine = WhisperKitEngine()
+    let done = DispatchSemaphore(value: 0)
+    // Detached on purpose: the parent thread blocks below, so the work must not inherit the
+    // main actor or the wait would deadlock.
+    Task.detached {
+        await engine.prepare()
+        let started = Date()
+        let result = await engine.transcribe(samples: samples, prompt: ASRPrompt.build())
+        let text = result?.text ?? ""
+        let header = String(format: "%.1fs  %dms  chars=%d\n",
+                            Double(samples.count) / 16000,
+                            Int(Date().timeIntervalSince(started) * 1000), text.count)
+        FileHandle.standardOutput.write(Data((header + text + "\n").utf8))
+        done.signal()
+    }
+    done.wait()
 }
 
 vpLog("=== VoicePad Starting ===")

@@ -372,7 +372,9 @@ final class LLMPolisher {
                                              contract: contract)
 
         do {
-            let result = try await callLLM(config: config, apiKey: apiKey, model: config.model, systemPrompt: systemPrompt, userText: text, maxTokens: 1024)
+            // Scale the budget with the input: a fixed 1024 silently truncates a long
+            // dictation mid-sentence, which reads as "the end of what I said is gone".
+            let result = try await callLLM(config: config, apiKey: apiKey, model: config.model, systemPrompt: systemPrompt, userText: text, maxTokens: max(1024, text.count * 2))
             vpLog("[LLMPolisher] polished: '\(result.prefix(80))'")
             return result
         } catch {
