@@ -61,6 +61,9 @@ final class AppState {
     /// The configured hotkey keyCode.
     var hotkeyKeyCode: Int { hotkeyMonitor.hotkeyKeyCode }
 
+    /// Why the hotkey may not be working right now (trust lost, secure input field).
+    var hotkeyHealth: HotkeyMonitor.Health { hotkeyMonitor.health() }
+
     /// The selected microphone unique ID, or nil for system default.
     var selectedMicID: String? { audioEngine.selectedMicID }
 

@@ -96,6 +96,21 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let hotkeyItem = NSMenuItem(title: "Hotkey: Double-tap \(hotkeyName)", action: nil, keyEquivalent: "")
         hotkeyItem.submenu = buildHotkeySubmenu()
         menu.addItem(hotkeyItem)
+
+        // A dead hotkey is the one failure the user reads as "the app broke" and then has
+        // no way to diagnose. Say why, right where they look for the hotkey.
+        let health = appState.hotkeyHealth
+        if health != .ok {
+            let title = switch health {
+            case .notTrusted: "Hotkey dead: Accessibility permission missing — click to fix"
+            case .secureInput: "Hotkey paused: a secure input field has the keyboard"
+            case .stopped, .ok: "Hotkey inactive"
+            }
+            let healthItem = NSMenuItem(title: title, action: #selector(openAccessibilitySettings), keyEquivalent: "")
+            healthItem.target = self
+            healthItem.isEnabled = health == .notTrusted
+            menu.addItem(healthItem)
+        }
         menu.addItem(withTitle: "Remote: Hold F18 to talk", action: nil, keyEquivalent: "").isEnabled = false
 
         let micName = selectedMicName()
@@ -259,6 +274,11 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
     @objc private func openAPISettings() {
         SettingsWindowController.shared.showTab(.api)
+    }
+
+    @objc private func openAccessibilitySettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - History

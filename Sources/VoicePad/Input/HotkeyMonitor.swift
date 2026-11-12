@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 
 /// Monitors global keyboard events for double-tap-to-record hotkey.
 /// Double-tap the configured modifier key to start recording.
@@ -14,12 +15,41 @@ final class HotkeyMonitor {
     var onKeyDown: (() -> Void)?
     var onKeyUp: (() -> Void)?
     var onLongPress: (() -> Void)?
+    /// Fires when the monitor's health changes, so the menu bar can say why the hotkey
+    /// is dead instead of leaving the user with "it stopped working".
+    var onHealthChange: ((Health) -> Void)?
+
+    /// Why the hotkey may not be working. There is no event tap in this app — the hotkey
+    /// is NSEvent global monitors — and macOS gives no callback when those stop
+    /// delivering, so the state has to be probed.
+    enum Health: Equatable {
+        /// Monitors installed and events can arrive.
+        case ok
+        /// Accessibility trust is gone: global monitors go silent with no error at all.
+        case notTrusted
+        /// A secure input field (password prompt, secure terminal) is swallowing key
+        /// events. Transient and self-healing, but it explains a recording that never
+        /// started, so it is logged rather than hidden.
+        case secureInput
+        /// No monitors installed — should not happen, heals by itself.
+        case stopped
+    }
+
+    /// Injected so the state machine can be tested without the real TCC database.
+    var isTrusted: () -> Bool = { AXIsProcessTrusted() }
+    var isSecureInput: () -> Bool = { IsSecureEventInputEnabled() }
 
     private var globalFlagsMonitor: Any?
     private var localFlagsMonitor: Any?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
     private var remoteKeyHeld = false
+    private var healthTimer: Timer?
+    private(set) var lastHealth: Health = .stopped
+
+    /// 20 s is cheap (two syscalls) and short enough that a permission revoked mid-session
+    /// is noticed before the user files it as "the app broke".
+    private let healthInterval: TimeInterval = 20
 
     // Double-tap detection state
     private var isKeyDown = false
@@ -66,6 +96,22 @@ final class HotkeyMonitor {
     }
 
     func start() {
+        installMonitors()
+        lastHealth = health()
+        startWatchdog()
+        // The line to look for when someone reports "the hotkey stopped working".
+        vpLog("[HotkeyMonitor] started, health=\(lastHealth)")
+    }
+
+    /// Re-installs the monitors without touching the watchdog. Global monitors registered
+    /// under a TCC state that has since changed do not necessarily start delivering again;
+    /// re-registering is the only way to be sure.
+    func restart() {
+        removeMonitors()
+        installMonitors()
+    }
+
+    private func installMonitors() {
         // Monitor modifier key changes globally
         globalFlagsMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             self?.handleFlags(event)
@@ -95,7 +141,19 @@ final class HotkeyMonitor {
         }
     }
 
+    private func removeMonitors() {
+        for monitor in [globalFlagsMonitor, localFlagsMonitor, globalKeyMonitor, localKeyMonitor] {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+        }
+        globalFlagsMonitor = nil
+        localFlagsMonitor = nil
+        globalKeyMonitor = nil
+        localKeyMonitor = nil
+    }
+
     func stop() {
+        healthTimer?.invalidate()
+        healthTimer = nil
         if remoteKeyHeld {
             remoteKeyHeld = false
             isRecordingActive = false
@@ -103,22 +161,48 @@ final class HotkeyMonitor {
         }
         longPressTimer?.invalidate()
         longPressTimer = nil
-        if let monitor = globalFlagsMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalFlagsMonitor = nil
+        removeMonitors()
+        lastHealth = .stopped
+    }
+
+    // MARK: - Health watchdog
+
+    /// The hotkey fails silently: with trust revoked the monitors simply stop firing, and
+    /// there is nothing in the log to say so. Probe the state, and tell the menu bar.
+    func checkHealth() {
+        let current = health()
+        let previous = lastHealth
+        guard current != previous else { return }
+        lastHealth = current
+        vpLog("[HotkeyMonitor] health \(previous) → \(current)")
+        onHealthChange?(current)
+
+        // Trust granted while the app was running, or monitors missing for any reason:
+        // re-registration is free and is the only state change that can actually recover.
+        if current == .ok || current == .stopped {
+            restart()
         }
-        if let monitor = localFlagsMonitor {
-            NSEvent.removeMonitor(monitor)
-            localFlagsMonitor = nil
+    }
+
+    private func startWatchdog() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: healthInterval, repeats: true) { [weak self] _ in
+            self?.checkHealth()
         }
-        if let monitor = globalKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            globalKeyMonitor = nil
-        }
-        if let monitor = localKeyMonitor {
-            NSEvent.removeMonitor(monitor)
-            localKeyMonitor = nil
-        }
+    }
+
+    func health() -> Health {
+        Self.health(monitorsInstalled: globalFlagsMonitor != nil,
+                    isTrusted: isTrusted(),
+                    isSecureInput: isSecureInput())
+    }
+
+    static func health(monitorsInstalled: Bool, isTrusted: Bool, isSecureInput: Bool) -> Health {
+        guard monitorsInstalled else { return .stopped }
+        guard isTrusted else { return .notTrusted }
+        // Secure input wins over ok: events are delivered to nobody while it is on.
+        if isSecureInput { return .secureInput }
+        return .ok
     }
 
     /// F18 is a separate push-to-talk input for the remote; modifier gestures stay unchanged.
