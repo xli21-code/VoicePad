@@ -5,6 +5,8 @@ Runs the shipped polish prompt (dumped from the app binary, so it can never drif
 the code) over real dictations and checks the things that broke in practice:
 
   - failures: empty / punctuation-only / echo of the input
+  - compression: the rewrite must actually be shorter than the input (median gain),
+    without any single utterance losing half of itself (that would be summarising)
   - content loss: the rewriter deleting the second half of a sentence
   - term survival: English jargon keeping its spelling
   - filler left over
@@ -45,11 +47,15 @@ def baseline_path(contract: str) -> str:
 PUNCT = "，。！？、,.!?;；：: \t\n\r（）()《》“”\"'’‘-—…"
 LIST_MARK = re.compile(r"^\s*(?:[-*•]|\d+[.、)]|#{1,6}\s)", re.M)
 # When the speaker retracts themselves, deleting the retracted part is the correct
-# behaviour, not content loss. Only unmarked deletion is suspicious.
-CORRECTION = re.compile(r"不对|我是说|应该说|改成|换成|重说|说错了|算了|当我没说|没有或者")
+# behaviour, not content loss. Only unmarked deletion is suspicious. The last alternative
+# is the garbled retraction ("不是他，不是这个，不是这个人"), which is one utterance's worth
+# of residue and legitimately almost disappears; a single "不是" is not enough to match,
+# because a plain negation must stay a gate.
+CORRECTION = re.compile(r"不对|我是说|应该说|改成|换成|重说|说错了|算了|当我没说|没有或者|不是.{0,6}不是")
 NUMBER = re.compile(r"\d+(?:[.,]\d+)?%?")
 # Words that carry the meaning of a sentence. Losing one is not a style choice.
 NEGATIONS = "不没别未无非"
+RHETORICAL = re.compile(r"是不是|对不对|好不好|行不行|不是[^。！？]{0,20}吗")
 # "五号六号" and "5号6号" are the same fact; comparing digits to Chinese numerals produced
 # false positives, so number checks are skipped for utterances that use the latter.
 CN_NUMERALS = "零一二三四五六七八九十百千万"
@@ -62,13 +68,21 @@ BULLET = re.compile(r"^\s*(?:[-*•]|\d+[.、)])\s", re.M)
 def facts(text):
     """The parts of a dictation that must survive any amount of tidying.
 
-    Numbers and negations only. Latin terms were tried and dropped: ASR spelling fixes
-    (benchch → benchmark, sense voiceice → SenseVoice) look like losses to a token
-    comparison, so term survival is measured separately by the term-rate metric.
+    Numbers, plus a yes/no on negation. Negation is compared as a class rather than
+    per-character: "不让我们有太多操作感" → "没有太多操作感" keeps the negation and only
+    swaps the word, and rewordings like that are the whole point of the rewrite now.
+
+    Rhetorical tags ("是不是…吗", "对不对") are stripped first: the rewrite is expected to
+    turn "是不是要换模型" into "要换模型吗", which drops the 不 without dropping the question.
+
+    Latin terms were tried and dropped: ASR spelling fixes (benchch → benchmark,
+    sense voiceice → SenseVoice) look like losses to a token comparison, so term
+    survival is measured separately by the term-rate metric.
     """
+    statement = RHETORICAL.sub("", text)
     return {
         "numbers": {n.rstrip("%") for n in NUMBER.findall(text)},
-        "negations": {c for c in NEGATIONS if c in text},
+        "negation": any(c in statement for c in NEGATIONS),
     }
 
 
@@ -94,6 +108,15 @@ def english_terms(s: str):
 
 def filler_count(s: str) -> int:
     return len(re.findall(r"[呃嗯哦噢]|然后然后|就是就是|那个那个", s))
+
+
+# Filler that survives a rewrite is the thing the user actually hears as "still talking".
+# It is counted together with the hedges that the prompt asks to delete.
+HEDGE = re.compile(r"然后|就是|其实|所以说|那个|这一块|我觉得|可能|比较|大概|应该|稍微")
+
+
+def hedge_count(s: str) -> int:
+    return len(HEDGE.findall(s))
 
 
 def load_pricing(cfg):
@@ -209,7 +232,7 @@ def evaluate(items, cfg, prompt, price=None):
         # for those utterances — otherwise the metric punishes the correct behaviour.
         kept_numbers = set() if not comparable else fin["numbers"] - fout["numbers"]
         lost = [] if CORRECTION.search(raw) else sorted(
-            kept_numbers | (fin["negations"] - fout["negations"]))
+            kept_numbers | ({NEGATIONS[0]} if fin["negation"] and not fout["negation"] else set()))
         new_numbers = sorted(fout["numbers"] - fin["numbers"]) if comparable else []
         rows.append({
             "raw": raw,
@@ -219,7 +242,13 @@ def evaluate(items, cfg, prompt, price=None):
             "failed": failed,
             "unchanged": s_out == s_in,
             "content_keep": round(content_keep, 3),
-            "content_lost": (len(s_in) >= 6 and content_keep < 0.5
+            # Trimming is the job now, so an identical output is the failure mode, not a
+            # safe result. Positive = shorter than the input.
+            "compression": round(1 - len(s_out) / len(s_in), 3) if s_in else 0.0,
+            "hedges": hedge_count(out),
+            # The threshold moved down because deleting filler lowers character overlap
+            # without dropping meaning. Facts (numbers, negations) stay the hard gate.
+            "content_lost": (len(s_in) >= 6 and content_keep < 0.35
                              and not CORRECTION.search(raw)),
             "terms": len(terms),
             "term_hits": term_hits,
@@ -256,6 +285,16 @@ def summarize(rows):
         "term_hits": hits,
         "term_rate": round(hits / terms, 3) if terms else 1.0,
         "fillers_left": sum(r.get("fillers", 0) for r in rows),
+        "hedges_left": sum(r.get("hedges", 0) for r in rows),
+        "compression_p50": round(statistics.median(
+            [r["compression"] for r in rows if r.get("compression") is not None] or [0]), 3),
+        "compression_mean": round(statistics.mean(
+            [r["compression"] for r in rows if r.get("compression") is not None] or [0]), 3),
+        "expanded": sum(1 for r in rows if (r.get("compression") or 0) < 0),
+        # A rewrite that halves a dictation is summarising, not tidying.
+        "over_compressed": sum(1 for r in rows
+                               if (r.get("compression") or 0) > 0.7
+                               and not CORRECTION.search(r["raw"])),
         "structure_added": sum(1 for r in rows if r.get("structure_added")),
         "facts_lost": sum(1 for r in rows if r.get("facts_lost")),
         "new_numbers": sum(len(r.get("new_numbers") or []) for r in rows),
@@ -275,6 +314,12 @@ def summarize(rows):
 def gates(cur, base, contract="neutral"):
     checks = []
     checks.append(("失败率 ≤ 5%", cur["fail_rate"] <= 0.05, f"{cur['fail_rate']:.1%}"))
+    # The prompt states a 10–30% budget; the median is the fleet-level reading of it.
+    # Per-item variance is expected (a clean utterance has nothing to trim).
+    checks.append(("压缩中位 ≥ 10%（不是原样返回）", cur["compression_p50"] >= 0.10,
+                   f"{cur['compression_p50']:.0%}"))
+    checks.append(("没有把话砍掉一半（单条 ≤ 70%）", cur["over_compressed"] == 0,
+                   str(cur["over_compressed"])))
     if contract == "chat":
         # Regrouping breaks a character-level ratio without dropping anything, so the
         # organise contract is held to facts instead: numbers, negations, terms.
@@ -363,6 +408,8 @@ def main():
               f"   contract: {args.contract}")
         print(f"  失败 {cur['failures']}/{cur['items']}   原样返回 {cur['unchanged']}   掉内容 {cur['content_lost']}   "
               f"术语 {cur['term_hits']}/{cur['terms']} = {cur['term_rate']:.0%}")
+        print(f"  压缩 中位 {cur['compression_p50']:.0%} / 均值 {cur['compression_mean']:.0%}   "
+              f"变长 {cur['expanded']}   砍半 {cur['over_compressed']}   垫话残留 {cur['hedges_left']}")
         print(f"  残留填充词 {cur['fillers_left']}   擅自加结构 {cur['structure_added']}   "
               f"事实丢失 {cur['facts_lost']}   编造数字 {cur['new_numbers']}   "
               f"p50 {cur['p50_ms']}ms  p90 {cur['p90_ms']}ms")

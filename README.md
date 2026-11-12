@@ -91,8 +91,12 @@ python3 scripts/regress.py --update-baseline # 确认改进之后才更新基线
 ```
 
 它把 App 自己的 system prompt dump 出来（`VoicePad --dump-polish-prompt`），所以测的一定是线上
-在用的那份 prompt，不会和代码漂移。指标：失败率、疑似掉内容（已排除自我纠正）、术语保留率、
-残留填充词、是否擅自加结构化、p50/p90、单次成本。基线在 `~/.voicepad/eval/regress_baseline.json`。
+在用的那份 prompt，不会和代码漂移。指标：失败率、疑似掉内容（已排除自我纠正）、压缩率（中位/均值，
+以及“砍掉一半”的单条）、术语保留率、残留填充词、是否擅自加结构化、p50/p90、单次成本。
+基线在 `~/.voicepad/eval/regress_baseline.json`。
+
+压缩率是这一版的主指标：改写层以前几乎原样返回（中位 -4%），现在要求比原话短 10%–30%，
+门槛是**中位 ≥ 10%**，同时不许单条砍掉一半（>70%）——那是摘要，不是整理。
 
 成本口径：网关 `/v1/models` 给该模型报的单价 × 本次响应的 `usage` token（cache-read 按缓存价折扣），
 本地 ASR 边际成本计 0。网关不报价的模型只输出 token 数、不开成本 gate，也不会被当成免费。
