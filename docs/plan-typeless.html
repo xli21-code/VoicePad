@@ -185,7 +185,7 @@
 <script>
 /* ───────────────────────── 唯一数据源 ───────────────────────── */
 const PLAN = {
-  updated: "2026-11-10 05:30",
+  updated: "2026-11-12 06:20",
   range: { start: "2026-11-09", end: "2026-11-25" },
   // 本机日期，不从字面量读：写死的 today 隔夜就过期，进度条与竖线会指错天。
   today: new Date().toLocaleDateString("sv-SE"),
@@ -224,28 +224,28 @@ const PLAN = {
 
     { id: "T17", phase: "P4", title: "AX 直写 → 富文本 → 剪贴板", note: "剪贴板+Cmd+V 仍是唯一通用路径；AXValue 只用在纠错替换上", start: "2026-11-14", end: "2026-11-17", status: "planned" },
     { id: "T18", phase: "P4", title: "预览期增量替换（已随流式暂缓）", note: "没有流式预览，这一项没有对象", start: "2026-11-16", end: "2026-11-18", status: "planned" },
-    { id: "T19", phase: "P4", title: "CGEventTap 看门狗", note: "tap 被系统静默禁用时自动重启", start: "2026-11-11", end: "2026-11-11", status: "planned" },
+    { id: "T19", phase: "P4", title: "热键看门狗（原写 CGEventTap，实际是 NSEvent 全局监听）", note: "App 里没有 event tap，热键走 NSEvent 全局监听；它失效时系统不给任何回调。已改成 20s 探针：装没装 / AX 信任 / 安全输入，授权恢复即重装监听，菜单直接显示「热键为什么死了」并可一键跳系统设置；4 条单测", start: "2026-11-12", end: "2026-11-12", status: "done" },
     { id: "M4", phase: "P4", milestone: true, title: "全 app 通", start: "2026-11-18", end: "2026-11-18" },
 
     { id: "T25", phase: "P5", title: "hotwords 注入 ASR", note: "ASRPrompt.build(vocabulary:) 已接词表，只回灌拉丁术语；术语存活 60% → 87%", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T21", phase: "P5", title: "逐 app 语气 + 周报评测", note: "分支语气已注入 prompt；周报评测未做", start: "2026-11-19", end: "2026-11-22", status: "doing" },
     { id: "T23", phase: "P0", title: "回归评测一键跑", note: "scripts/regress.py；5 道 gate 全绿，基线已存；--dump-polish-prompt 钩子已提交，干净树可跑", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "RMS 过低或输出仅标点 → 不出字", start: "2026-11-11", end: "2026-11-11", status: "planned" },
+    { id: "T24", phase: "P4", title: "静音 / 幻觉门", note: "纯标点/无字母数字的输出不出字已落地（AppState 有门）；麦克风 RMS 过低不出字还没做", start: "2026-11-11", end: "2026-11-11", status: "doing" },
     { id: "T22", phase: "P5", title: "纠错学习：只走别名，静默落盘", note: "learner 只产词级别名并直接生效，不再往词表/ASR prompt 灌词——300 字符要留给真术语；确认弹窗已删", start: "2026-11-10", end: "2026-11-10", status: "done" },
     { id: "T33", phase: "P5", title: "词表清污 + 学习护栏", note: "整句别名降维成词（蒙字→蒙自）、无词可锚的单字不再学、纯标点不算纠错；存量 11→8 条，terms 4→0", start: "2026-11-10", end: "2026-11-10", status: "done" },
-    { id: "T29", phase: "P5", title: "词表粘贴导入", note: "一次粘贴多行/多词，自动去重", start: "2026-11-15", end: "2026-11-16", status: "planned" },
+    { id: "T29", phase: "P5", title: "词表粘贴导入", note: "文件导入 + LLM 解析已通（多行/CSV/词表文本都能进，自动去重）；剪贴板一键粘贴入口还没接", start: "2026-11-15", end: "2026-11-16", status: "planned" },
     { id: "T30", phase: "P5", title: "选中即加词", note: "选中文本 → 菜单一键进词表", start: "2026-11-16", end: "2026-11-16", status: "planned" },
     { id: "T31", phase: "P5", title: "自动提议新词", note: "从历史里找高频、未收录的英文词，一键采纳", start: "2026-11-16", end: "2026-11-17", status: "planned" },
     { id: "M5", phase: "P5", milestone: true, title: "同类错误不重复", start: "2026-11-17", end: "2026-11-17" },
 
     { id: "T26", phase: "P6", title: "输出格式策略（按 app）", note: "按 bundle id 自动分类 chat/document/code/email/neutral，格式自动、语气仍手配；regress 加 --contract，三档实测掉内容 0、术语 83–85%、p50 ~708ms", start: "2026-11-10", end: "2026-11-10", status: "done" },
+    { id: "T35", phase: "P6", title: "精简强度：从「原样返回」到真在改", note: "141 条真实口述：压缩中位 4%→17%、垫话残留 37→6、原样返回 41→34、掉内容/事实丢失 0；手段是数字预算（短 10–30%）+ 反例对 + 公文腔黑名单 + 保留征询反问；regress 新增压缩率两道 gate（中位 ≥10%、单条不砍半）；短句兜底 70%→60%", start: "2026-11-12", end: "2026-11-12", status: "done" },
     { id: "T27", phase: "P6", title: "放开结构化 + 内容守护", note: "A 档已落地：chat 允许 ≤3 段/≤5 条、可合并重复、不改用词；守护换成 事实不丢 + 编造数字不增加 + 过度结构化=0；B/C 档待做", start: "2026-11-10", end: "2026-11-21", status: "doing" },
     { id: "T28", phase: "P6", title: "语音格式指令", note: "「分三点」「写成邮件」「缩成两句」", start: "2026-11-21", end: "2026-11-23", status: "planned" },
     { id: "M6", phase: "P6", milestone: true, title: "结构化输出可用", start: "2026-11-23", end: "2026-11-23" },
   ],
   blockers: [
     { id: "B1", title: "Magpie 能否注册 audio/STT provider", desc: "端点 /v1/audio/transcriptions 已存在但无 audio 模型。只影响「云端 ASR 是否也进网关」，本地 ASR 路线不受影响，故不再阻塞。", owner: "我", tag: "可后置", level: "grey" },
-    { id: "B2", title: "对照集还没录", desc: "没有 30–50 条带音频的原始 ASR / 定稿对照组，CER 无从比较，换引擎只是靠感觉。", owner: "你", tag: "阻塞 T3", level: "red" },
     { id: "B3", title: "Apple Speech 中英混说表现未知", desc: "它支持中文/粤语，但「大量英文术语夹在中文句子里」是否把术语转成汉字，只有对照集能回答。", owner: "我", tag: "待验证", level: "grey" },
     { id: "B4", title: "SenseVoice 当前加载的是 937MB 浮点模型", desc: "盘上同时有 model.onnx 与 model.int8.onnx，代码取前者。内存与解码时延可能白付 4 倍。", owner: "我", tag: "小", level: "grey" },
     { id: "B7", title: "没有 macOS 26 SDK，Apple SpeechTranscriber 编不了", desc: "本机只有 CLT 15.5 SDK（无 Xcode 26）。横评已改走 WhisperKit，本条降级为「若将来装 Xcode 26 再评估」。", owner: "你", tag: "已绕过", level: "grey" },
@@ -262,7 +262,6 @@ const PLAN = {
     { title: "隐私三档路由 + 读前黑名单", desc: "敏感 app → 只走本地模型、且不读上下文。你已定暂缓；恢复前需要先给敏感 app 名单（微信/飞书/Excel/WPS/公司文档站）。架构上留好位置：模型选择在发送前完成，不做事后补救。" },
     { title: "流式两段式（VAD 分段 / 预览浮窗 / 长句重解码）", desc: "你已定往后放：先把识别质量和术语修好，再谈边说边出字。协议化之后这几件是纯增量，随时能捡回来。" },
     { title: "云端流式 ASR 接入", desc: "Deepgram / realtime 类 WS 流式识别。取决于 B1 与对照集结果：本地引擎够用就不接，接的话也走 ASREngine 协议，不污染主链。" },
-    { title: "语音编辑选中文本", desc: "Typeless 的招牌功能之一（「把上面那句改成…」）。依赖 P2 的 AX 层，AX 落地后可随时插队，不需要单独排期。" },
   ],
   branches: [
     { name: "chore/eval-harness", base: "main", target: "M0 · 11-13", risk: "低", note: "纯新增脚本与目录，不动主链" },
