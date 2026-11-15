@@ -43,6 +43,12 @@ final class HotkeyMonitor {
     private var localFlagsMonitor: Any?
     private var globalKeyMonitor: Any?
     private var localKeyMonitor: Any?
+    /// NSEvent global monitors are passive: they observe, they cannot swallow. The remote
+    /// key has to be eaten before the focused app sees it (otherwise it leaks as an F18
+    /// keystroke, which the target app answers with a beep on every repeat), so it runs
+    /// through a tap of its own.
+    private var remoteKeyTap: CFMachPort?
+    private var remoteKeyRunLoopSource: CFRunLoopSource?
     private var remoteKeyHeld = false
     private var healthTimer: Timer?
     private(set) var lastHealth: Health = .stopped
@@ -139,9 +145,70 @@ final class HotkeyMonitor {
             }
             return event
         }
+
+        installRemoteKeyTap()
+    }
+
+    /// Swallows the remote push-to-talk key (F18) so it never reaches the focused app.
+    /// Without Accessibility trust the tap cannot be created; the passive monitors above
+    /// still drive recording, the key just leaks.
+    private func installRemoteKeyTap() {
+        guard remoteKeyTap == nil else { return }
+
+        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
+        let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .defaultTap,
+            eventsOfInterest: CGEventMask(mask),
+            callback: { _, type, event, userInfo in
+                guard let userInfo else { return Unmanaged.passUnretained(event) }
+                let monitor = Unmanaged<HotkeyMonitor>.fromOpaque(userInfo).takeUnretainedValue()
+
+                // macOS disables a tap that runs long; re-arm it instead of going silent.
+                if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                    monitor.reenableRemoteKeyTap()
+                    return Unmanaged.passUnretained(event)
+                }
+
+                return monitor.handleRemoteKey(cgEvent: event) ? nil : Unmanaged.passUnretained(event)
+            },
+            userInfo: Unmanaged.passUnretained(self).toOpaque()
+        )
+
+        guard let tap else {
+            vpLog("[HotkeyMonitor] F18 tap not created (no Accessibility trust) — remote key will leak to the focused app")
+            return
+        }
+
+        let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        CFRunLoopAddSource(CFRunLoopGetMain(), source, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        remoteKeyTap = tap
+        remoteKeyRunLoopSource = source
+        vpLog("[HotkeyMonitor] F18 tap installed — remote key swallowed")
+    }
+
+    private func reenableRemoteKeyTap() {
+        guard let remoteKeyTap else { return }
+        CGEvent.tapEnable(tap: remoteKeyTap, enable: true)
+        vpLog("[HotkeyMonitor] F18 tap was disabled by the system — re-enabled")
+    }
+
+    private func removeRemoteKeyTap() {
+        if let source = remoteKeyRunLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+            remoteKeyRunLoopSource = nil
+        }
+        if let tap = remoteKeyTap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+            remoteKeyTap = nil
+        }
     }
 
     private func removeMonitors() {
+        removeRemoteKeyTap()
         for monitor in [globalFlagsMonitor, localFlagsMonitor, globalKeyMonitor, localKeyMonitor] {
             if let monitor { NSEvent.removeMonitor(monitor) }
         }
@@ -209,16 +276,35 @@ final class HotkeyMonitor {
     @discardableResult
     func handleRemoteKey(_ event: NSEvent) -> Bool {
         guard event.keyCode == 79 else { return false }
-        if event.type == .keyDown {
-            guard !event.isARepeat, !remoteKeyHeld, !isRecordingActive,
-                  event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
-            else { return true }
+        return applyRemoteKey(
+            isDown: event.type == .keyDown,
+            isRepeat: event.isARepeat,
+            hasModifiers: !event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+        )
+    }
+
+    /// Same state machine, fed by the event tap (which sees F18 before any NSEvent monitor).
+    @discardableResult
+    func handleRemoteKey(cgEvent event: CGEvent) -> Bool {
+        guard event.getIntegerValueField(.keyboardEventKeycode) == 79 else { return false }
+        let chordFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
+        return applyRemoteKey(
+            isDown: event.type == .keyDown,
+            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
+            hasModifiers: !event.flags.intersection(chordFlags).isEmpty
+        )
+    }
+
+    @discardableResult
+    private func applyRemoteKey(isDown: Bool, isRepeat: Bool, hasModifiers: Bool) -> Bool {
+        if isDown {
+            guard !isRepeat, !remoteKeyHeld, !isRecordingActive, !hasModifiers else { return true }
             remoteKeyHeld = true
             lastTapTime = nil
             longPressTimer?.invalidate()
             isRecordingActive = true
             onKeyDown?()
-        } else if event.type == .keyUp, remoteKeyHeld {
+        } else if remoteKeyHeld {
             remoteKeyHeld = false
             isRecordingActive = false
             onKeyUp?()
