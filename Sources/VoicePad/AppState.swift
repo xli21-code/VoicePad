@@ -289,6 +289,27 @@ final class AppState {
             return
         }
 
+        // The recorder cannot tell a dead microphone route from a quiet speaker:
+        // a loopback device with nothing feeding it still yields a full buffer, and
+        // the speech model turns that into a hallucinated word (observed: '그.' /
+        // lang=<|ko|>) that the polisher then answers with "（无有效内容）" — which
+        // used to be pasted into the document. Judge the take first, over the active
+        // window only, because the buffer starts with up to 1.5 s of pre-roll.
+        let activeSampleCount = min(samples.count, Int(activeDuration * AudioEngine.sampleRate))
+        let signal = InputSignal.analyze(Array(samples.suffix(activeSampleCount)))
+        vpLog(
+            "[AppState] input: peak=\(String(format: "%.4f", signal.peak))"
+                + " rms=\(String(format: "%.5f", signal.rms))"
+                + " voiced=\(String(format: "%.2f", signal.voicedRatio)) active=\(activeSampleCount)"
+        )
+        if signal.isSilent {
+            vpLog("[AppState] silent take — not transcribing")
+            phase = .error("没听到声音")
+            updateOverlay()
+            scheduleIdleReset(after: 2)
+            return
+        }
+
         phase = .transcribing
         updateOverlay()
 

@@ -6,9 +6,11 @@ import CoreAudio
 /// The engine stays running with a permanent tap to eliminate startup latency.
 /// A pre-roll ring buffer captures the last 1.5s so no speech is lost on key-down.
 final class AudioEngine {
+    static let sampleRate: Double = 16_000
+
     private var engine: AVAudioEngine?
     private var sampleBuffer: [Float] = []
-    private let sampleRate: Double = 16000
+    private let sampleRate = AudioEngine.sampleRate
     private let bufferSize: AVAudioFrameCount = 1600 // ~100ms at 16kHz
     private let lock = NSLock()
 
