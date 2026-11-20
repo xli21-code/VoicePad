@@ -54,6 +54,16 @@ open /Applications/VoicePad.app
 
 首次启动时自动下载两套 ASR 模型：Whisper large-v3-turbo（WhisperKit，~1.5GB，主力）与 SenseVoice（~200MB，兜底）。app 会自动读取系统代理设置。
 
+另需一个语音活动检测模型（Silero VAD，629KB），放在 `~/.voicepad/models/silero-vad/silero_vad.onnx`：
+
+```bash
+mkdir -p ~/.voicepad/models/silero-vad
+curl -L -o ~/.voicepad/models/silero-vad/silero_vad.onnx \
+  https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+```
+
+它的作用：遥控器按键本身会送进一段到达满量程的低频撞击（松开即静音），Whisper 会把它误听成「我」「好」「I.」这类一个字的输出。电平判据看不出这种“有能量但没人说话”的录音，Silero 能。模型缺失时该判据自动跳过，只保留电平判据。
+
 ### 6. LLM 润色（可选）
 
 点击菜单栏图标 → Settings → API tab，配置：

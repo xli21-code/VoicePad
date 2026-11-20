@@ -31,6 +31,8 @@ final class AppState {
     private var recognizer: SherpaRecognizer?
     /// Primary engine; `recognizer` (SenseVoice) is the fallback.
     private let whisperEngine = WhisperKitEngine()
+    /// Nil when `silero_vad.onnx` is not installed: the level gate still applies.
+    private let speechDetector = SpeechDetector()
     private let hotkeyMonitor = HotkeyMonitor()
     private let textInserter = TextInserter()
     private let modelManager = ModelManager()
@@ -328,7 +330,7 @@ final class AppState {
         updateOverlay()
 
         Task {
-            await transcribeAndPaste(samples: samples)
+            await transcribeAndPaste(samples: samples, activeSampleCount: activeSampleCount)
         }
     }
 
@@ -359,7 +361,7 @@ final class AppState {
         return nil
     }
 
-    private func transcribeAndPaste(samples: [Float]) async {
+    private func transcribeAndPaste(samples: [Float], activeSampleCount: Int) async {
         guard recognizer != nil else {
             await MainActor.run {
                 phase = .error("Recognizer not ready")
@@ -367,6 +369,28 @@ final class AppState {
             }
             scheduleIdleReset(after: 2)
             return
+        }
+
+        // A press with nothing said still delivers a clipped thump that the level gate
+        // cannot see and Whisper misreads as a one-character word. Silero answers the
+        // actual question — was there speech — before the model is asked anything.
+        if let speechDetector {
+            let active = Array(samples.suffix(activeSampleCount))
+            let started = Date()
+            let heard = speechDetector.containsSpeech(active)
+            vpLog(
+                "[AppState] VAD: speech=\(heard) in \(active.count) samples"
+                    + " (\(Int(Date().timeIntervalSince(started) * 1000))ms)"
+            )
+            if !heard {
+                vpLog("[AppState] VAD found no speech — not transcribing")
+                await MainActor.run {
+                    phase = .error("没听到声音")
+                    updateOverlay()
+                }
+                scheduleIdleReset(after: 2)
+                return
+            }
         }
 
         vpLog("[AppState] transcribing \(samples.count) samples...")
