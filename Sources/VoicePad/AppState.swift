@@ -69,6 +69,10 @@ final class AppState {
     /// The selected microphone unique ID, or nil for system default.
     var selectedMicID: String? { audioEngine.selectedMicID }
 
+    /// The microphone the engine is really recording from, or nil when nothing is bound.
+    var actualMicName: String? { audioEngine.actualInputName }
+    var actualMicUID: String? { audioEngine.actualInputUID }
+
     /// Available input devices from AudioEngine.
     func availableInputDevices() -> [(id: String, name: String)] {
         audioEngine.availableInputDevices()

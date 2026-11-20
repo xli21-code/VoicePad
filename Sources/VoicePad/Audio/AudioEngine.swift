@@ -123,6 +123,11 @@ final class AudioEngine {
     /// The AudioDeviceID to use for the next engine prepare, or nil for system default.
     private var pendingDeviceID: AudioDeviceID?
 
+    /// What the audio unit is *actually* bound to, read back from the unit itself.
+    /// `selectedMicID` is only a request; this is the truth the UI has to show.
+    private(set) var actualInputUID: String?
+    private(set) var actualInputName: String?
+
     /// Apply the stored device selection — resolves uniqueID to AudioDeviceID
     /// without touching the system-wide default input device.
     private func applyDeviceSelection(uniqueID: String?) {
@@ -264,9 +269,11 @@ final class AudioEngine {
     /// - Parameter freshAttempt: a user action (hotkey, device pick) deserves a new
     ///   retry budget, otherwise a round of retries that already gave up would make
     ///   every later press fail instantly.
-    func prepare(freshAttempt: Bool = false) {
+    func prepare(freshAttempt: Bool = false, allowFallback: Bool = true) {
         cancelRetry()
         installDeviceChangeListener()
+        actualInputUID = nil
+        actualInputName = nil
         if freshAttempt {
             retryCount = 0
         }
@@ -395,6 +402,7 @@ final class AudioEngine {
             engineRunning = true
             retryCount = 0
             vpLog("[AudioEngine] engine started (always-on mode)")
+            verifyBinding(inputFormat: inputFormat, allowFallback: allowFallback)
         } catch {
             vpLog("[AudioEngine] FAILED to start engine: \(error)")
             eng.inputNode.removeTap(onBus: 0)
@@ -452,6 +460,8 @@ final class AudioEngine {
     /// Call `wake()` or `prepare()` to restart.
     func sleep() {
         cancelRetry()
+        actualInputUID = nil
+        actualInputName = nil
         guard engineRunning else { return }
         vpLog("[AudioEngine] going to sleep — stopping engine to save resources")
         engine?.inputNode.removeTap(onBus: 0)
@@ -473,6 +483,74 @@ final class AudioEngine {
         isSleeping = false
         prepare(freshAttempt: true)
         return engineRunning
+    }
+
+    // MARK: - Binding verification
+
+    /// Reads the device the audio unit is using and compares it with the request. A silent
+    /// mismatch is how the app could record from the wrong device while the menu named the
+    /// right one, so a mismatch is logged and retried once on the system default.
+    private func verifyBinding(inputFormat: AVAudioFormat, allowFallback: Bool) {
+        guard let unit = engine?.inputNode.audioUnit else { return }
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        let status = AudioUnitGetProperty(
+            unit,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &deviceID,
+            &size
+        )
+
+        guard status == noErr, deviceID != 0, let bound = describeDevice(deviceID) else {
+            actualInputUID = nil
+            actualInputName = nil
+            vpLog("[AudioEngine] binding unknown (status=\(status)) — cannot verify the microphone")
+            return
+        }
+
+        actualInputUID = bound.uid
+        actualInputName = bound.name
+        let intended = selectedMicID
+        let matches = InputBinding.matches(intended: intended, actual: bound.uid)
+        vpLog(
+            "[AudioEngine] input bound: \(bound.name) "
+                + "(\(Int(inputFormat.sampleRate))Hz \(inputFormat.channelCount)ch) "
+                + (intended == nil ? "[automatic]" : matches ? "[as requested]" : "[MISMATCH]")
+        )
+
+        guard !matches, allowFallback else { return }
+        vpLog("[AudioEngine] requested microphone did not take — falling back to the system default input")
+        pendingDeviceID = nil
+        DispatchQueue.main.async { [weak self] in
+            self?.prepare(freshAttempt: true, allowFallback: false)
+        }
+    }
+
+    /// UID and display name for a CoreAudio device.
+    private func describeDevice(_ deviceID: AudioDeviceID) -> (uid: String, name: String)? {
+        var uidAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceUID,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var uid: CFString = "" as CFString
+        var uidSize = UInt32(MemoryLayout<CFString>.size)
+        guard AudioObjectGetPropertyData(deviceID, &uidAddress, 0, nil, &uidSize, &uid) == noErr,
+              !(uid as String).isEmpty
+        else { return nil }
+
+        var nameAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceNameCFString,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var name: CFString = "" as CFString
+        var nameSize = UInt32(MemoryLayout<CFString>.size)
+        AudioObjectGetPropertyData(deviceID, &nameAddress, 0, nil, &nameSize, &name)
+
+        return (uid as String, name as String)
     }
 
     // MARK: - Device Change Listener

@@ -217,13 +217,22 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         appState.setInputDevice(uniqueID: deviceID)
     }
 
+    /// Shows the microphone the engine is actually bound to. Naming the configured
+    /// device while another one is recording is the failure this label must not repeat.
     private func selectedMicName() -> String {
-        guard let selectedID = appState.selectedMicID else { return "Automatic" }
-        let devices = appState.availableInputDevices()
-        if let device = devices.first(where: { $0.id == selectedID }) {
-            return device.name
+        let requested = appState.selectedMicID
+        let requestedName = requested.flatMap { id in
+            appState.availableInputDevices().first { $0.id == id }?.name
         }
-        return "Automatic"
+        if let label = InputBinding.menuLabel(
+            intended: requested,
+            intendedName: requestedName,
+            actual: appState.actualMicUID,
+            actualName: appState.actualMicName
+        ) {
+            return label
+        }
+        return requestedName ?? "Automatic"
     }
 
     // MARK: - Toggle Actions
