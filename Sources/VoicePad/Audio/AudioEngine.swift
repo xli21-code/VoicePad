@@ -111,7 +111,7 @@ final class AudioEngine {
             engineRunning = false
             engine?.inputNode.removeTap(onBus: 0)
             engine = nil
-            prepare()
+            prepare(freshAttempt: true)
         }
     }
 
@@ -261,9 +261,15 @@ final class AudioEngine {
 
     /// Start the audio engine and install a permanent tap.
     /// Call once at app startup. The engine stays running in the background.
-    func prepare() {
+    /// - Parameter freshAttempt: a user action (hotkey, device pick) deserves a new
+    ///   retry budget, otherwise a round of retries that already gave up would make
+    ///   every later press fail instantly.
+    func prepare(freshAttempt: Bool = false) {
         cancelRetry()
         installDeviceChangeListener()
+        if freshAttempt {
+            retryCount = 0
+        }
 
         guard hasInputDevice() else {
             vpLog("[AudioEngine] No input device available — skipping engine setup")
@@ -407,7 +413,7 @@ final class AudioEngine {
 
         // If engine isn't running yet, try to (re-)prepare — a mic may have been plugged in
         if !engineRunning {
-            prepare()
+            prepare(freshAttempt: true)
         }
 
         guard engineRunning else {
@@ -465,7 +471,7 @@ final class AudioEngine {
         guard isSleeping else { return engineRunning }
         vpLog("[AudioEngine] waking up from sleep")
         isSleeping = false
-        prepare()
+        prepare(freshAttempt: true)
         return engineRunning
     }
 
@@ -475,20 +481,43 @@ final class AudioEngine {
     func installDeviceChangeListener() {
         guard !deviceChangeListenerInstalled else { return }
 
+        let status = listenForDeviceChanges(
+            selector: kAudioHardwarePropertyDefaultInputDevice,
+            log: "Default input device changed"
+        )
+        // A renumbered device (a virtual driver reloading hands out a new AudioDeviceID
+        // for the same UID) changes the device list without changing the default input,
+        // so the engine stayed dead until the app was restarted.
+        let listStatus = listenForDeviceChanges(
+            selector: kAudioHardwarePropertyDevices,
+            log: "Audio device list changed"
+        )
+
+        if status == noErr && listStatus == noErr {
+            deviceChangeListenerInstalled = true
+            vpLog("[AudioEngine] Device change listener installed")
+        } else {
+            vpLog("[AudioEngine] Failed to install device change listener: \(status) / \(listStatus)")
+        }
+    }
+
+    private func listenForDeviceChanges(
+        selector: AudioObjectPropertySelector,
+        log message: String
+    ) -> OSStatus {
         var propertyAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mSelector: selector,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
 
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         let status = AudioObjectAddPropertyListenerBlock(
             AudioObjectID(kAudioObjectSystemObject),
             &propertyAddress,
             DispatchQueue.main
         ) { [weak self] _, _ in
             guard let self else { return }
-            vpLog("[AudioEngine] Default input device changed")
+            vpLog("[AudioEngine] \(message)")
 
             // Sync our flag with reality — macOS may have killed the engine silently
             self.syncEngineState()
@@ -507,14 +536,7 @@ final class AudioEngine {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
             }
         }
-
-        if status == noErr {
-            deviceChangeListenerInstalled = true
-            vpLog("[AudioEngine] Device change listener installed")
-        } else {
-            vpLog("[AudioEngine] Failed to install device change listener: \(status)")
-        }
-        _ = selfPtr // suppress unused warning
+        return status
     }
 
     /// Stop collecting and return the full sample buffer.

@@ -91,6 +91,20 @@ final class AppState {
         Task.detached(priority: .utility) { await engine.prepare() }
         setupHotkey()
         resetIdleTimer()
+        // macOS kills audio IO across a system sleep and does not always announce it,
+        // so the engine has to be rebuilt as soon as the machine is back.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            vpLog("[AppState] System woke — re-preparing AudioEngine")
+            self.audioEngine.syncEngineState()
+            if !self.audioEngine.engineRunning {
+                self.audioEngine.prepare(freshAttempt: true)
+            }
+        }
     }
 
     /// Call this after every phase change to update the overlay.
@@ -669,7 +683,7 @@ final class AppState {
         }
         if !audioEngine.engineRunning {
             vpLog("[AppState] AudioEngine not running, attempting prepare")
-            audioEngine.prepare()
+            audioEngine.prepare(freshAttempt: true)
         }
         return audioEngine.engineRunning
     }
