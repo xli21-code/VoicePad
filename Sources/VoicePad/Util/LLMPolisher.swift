@@ -580,11 +580,14 @@ final class LLMPolisher {
         return sections.joined(separator: "\n\n")
     }
 
-    /// The polish prompt without dictionary or app-branch additions, for the regression
-    /// harness (`VoicePad --dump-polish-prompt`).
-    static func debugPolishPrompt(contract: OutputContract = .neutral) -> String {
-        LLMPolisher().buildSystemPrompt(dictionaryTerms: [], appBranchPrompt: nil,
-                                        context: nil, contract: contract)
+    /// The polish prompt as the harness sees it (`VoicePad --dump-polish-prompt`).
+    /// The dictionary is excluded by default so a term-list edit cannot move the baseline;
+    /// `--with-dictionary` includes it, because the terms are otherwise untested.
+    static func debugPolishPrompt(contract: OutputContract = .neutral,
+                                 withDictionary: Bool = false) -> String {
+        let terms = withDictionary ? VocabularyStore.shared.polishTerms() : []
+        return LLMPolisher().buildSystemPrompt(dictionaryTerms: terms, appBranchPrompt: nil,
+                                               context: nil, contract: contract)
     }
 
     /// The field the user was in, and the text around the caret. Kept separate from the rules

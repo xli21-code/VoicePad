@@ -29,7 +29,9 @@ if CommandLine.arguments.contains("--dump-polish-prompt") {
         return OutputContract(rawValue: args[index + 1])
     } ?? .neutral
     // FileHandle writes are unbuffered; print() would be lost when stdout is a pipe.
-    FileHandle.standardOutput.write(Data(LLMPolisher.debugPolishPrompt(contract: contract).utf8))
+    let withDictionary = args.contains("--with-dictionary")
+    FileHandle.standardOutput.write(Data(
+        LLMPolisher.debugPolishPrompt(contract: contract, withDictionary: withDictionary).utf8))
     exit(0)
 }
 
@@ -73,7 +75,9 @@ func transcribeProbe(path: String) {
     Task.detached {
         await engine.prepare()
         let started = Date()
-        let result = await engine.transcribe(samples: samples, prompt: ASRPrompt.build())
+        let result = await engine.transcribe(
+            samples: samples,
+            prompt: ASRPrompt.build(vocabulary: VocabularyStore.shared.load().terms))
         let text = result?.text ?? ""
         let header = String(format: "%.1fs  %dms  chars=%d\n",
                             Double(samples.count) / 16000,

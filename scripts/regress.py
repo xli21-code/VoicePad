@@ -172,11 +172,14 @@ def load_config():
     }
 
 
-def dump_prompt(binary: str, contract: str = "neutral") -> str:
+def dump_prompt(binary: str, contract: str = "neutral", with_dictionary: bool = False) -> str:
     env = dict(os.environ)
     # The bare .build binaries need the bundled dylibs on the loader path.
     env["DYLD_LIBRARY_PATH"] = os.path.abspath("Frameworks/sherpa-onnx/lib")
-    out = subprocess.run([binary, "--dump-polish-prompt", "--contract", contract],
+    argv = [binary, "--dump-polish-prompt", "--contract", contract]
+    if with_dictionary:
+        argv.append("--with-dictionary")
+    out = subprocess.run(argv,
                          capture_output=True, text=True,
                          timeout=60, env=env)
     if out.returncode != 0 or not out.stdout.strip():
@@ -357,6 +360,8 @@ def gates(cur, base, contract="neutral"):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--binary", default=None)
+    ap.add_argument("--with-dictionary", action="store_true",
+                    help="包含 ~/.voicepad/vocabulary.json 的词表（默认不含，免得改词表就动基线）")
     ap.add_argument("--limit", type=int, default=0, help="only the most recent N items")
     ap.add_argument("--update-baseline", action="store_true")
     ap.add_argument("--json", action="store_true")
@@ -380,7 +385,7 @@ def main():
 
     cfg = load_config()
     price = load_pricing(cfg)
-    prompt = dump_prompt(binary, args.contract)
+    prompt = dump_prompt(binary, args.contract, args.with_dictionary)
     cfg["prompt_sha"] = hashlib.sha256(prompt.encode()).hexdigest()[:12]
 
     items = [json.loads(l) for l in open(PAIRS, encoding="utf-8") if l.strip()]

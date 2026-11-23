@@ -443,8 +443,8 @@ final class AppState {
                 updateOverlay()
             }
 
-            // Load vocabulary terms for LLM prompt injection
-            let dictionaryTerms = VocabularyStore.shared.load().terms
+            // Names and organisations only — see VocabularyStore.polishTerms.
+            let dictionaryTerms = VocabularyStore.shared.polishTerms()
 
             // Resolve App Branch context from the app user was typing in
             let branchPrompt = previousApp.flatMap { app in

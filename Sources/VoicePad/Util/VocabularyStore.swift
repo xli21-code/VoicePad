@@ -75,6 +75,18 @@ final class VocabularyStore {
         FileManager.default.fileExists(atPath: filePath)
     }
 
+    // MARK: - What the rewrite stage sees
+
+    /// Terms handed to the polishing prompt: the head of the list, which is organisations and
+    /// people (the ASR prompt truncates on the same order). Feeding all 100 terms cost 25%
+    /// more per dictation and left the same two rewrite failures; 40 costs 14% and lifts term
+    /// survival from 85% to 89%. Jargon stays out — it is what a rewrite rewords, not what it
+    /// has to spell. Known casualty (1 of 336): "可以选A,包括那个口语化的那个我觉得都可以删掉。"
+    /// collapses to "可以选A。" only when a dictionary is present — measured, not guessed.
+    func polishTerms(limit: Int = 40) -> [String] {
+        Array(load().terms.prefix(limit))
+    }
+
     // MARK: - Alias Application
 
     /// Apply alias corrections. Uses \b word boundaries for Latin text,
