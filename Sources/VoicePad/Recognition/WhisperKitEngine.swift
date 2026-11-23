@@ -25,6 +25,10 @@ final class WhisperKitEngine: ASREngine {
     static let minWindowSamples = 160_000
     /// A window quieter than this carries no speech worth retrying.
     static let audibleRMS: Float = 0.005
+    /// How far past a failing window's start to re-decode, in seconds. Whisper returns nothing
+    /// when a window opens mid-sentence; the hole is not a fixed 1 s, so try a range and stop
+    /// at the first window that decodes.
+    static let retryShifts = [1, 2, 3, 4]
 
     var name: String { "Whisper turbo" }
     var isReady: Bool { pipe != nil }
@@ -158,10 +162,12 @@ final class WhisperKitEngine: ASREngine {
         for range in ranges {
             var text = await decodeWindow(pipe, samples: Array(samples[range]), options: options)
             if text.isEmpty, Self.rms(samples[range]) > Self.audibleRMS {
-                // Whisper emits end-of-text immediately when a window opens on a hard edge —
+                // Whisper emits end-of-text immediately when a window opens mid-sentence —
                 // same 10.3 s of audible speech measured 0 chars at 24.9 s and 48 chars at
-                // 26.9 s in a real 35 s dictation. Moving the start forward recovers it.
-                for shiftSeconds in [1, 2] where text.isEmpty {
+                // 26.9 s in a real 35 s dictation. Moving the start forward recovers it, but
+                // the hole is deeper than 2 s: a 53.2 s dictation returned nothing for its
+                // whole 24.6 s second window at +1 s and +2 s and only decoded at +3 s.
+                for shiftSeconds in Self.retryShifts where text.isEmpty {
                     let shiftedStart = range.lowerBound + shiftSeconds * 16000
                     guard shiftedStart < range.upperBound else { break }
                     text = await decodeWindow(pipe, samples: Array(samples[shiftedStart..<range.upperBound]),
@@ -170,6 +176,13 @@ final class WhisperKitEngine: ASREngine {
                         vpLog("[WhisperKitEngine] empty window at \(range.lowerBound / 16000)s,"
                               + " recovered at +\(shiftSeconds)s")
                     }
+                }
+                // A window that still decodes to nothing has lost its audio. Say it out loud:
+                // the original bug was this happening silently.
+                if text.isEmpty {
+                    let seconds = String(format: "%.1f", Double(range.count) / 16000)
+                    vpLog("[WhisperKitEngine] window at \(range.lowerBound / 16000)s returned nothing"
+                          + " after \(Self.retryShifts.count) shifts, \(seconds)s of speech lost")
                 }
             }
             pieces.append(text)
