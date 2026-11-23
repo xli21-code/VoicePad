@@ -50,6 +50,9 @@ final class HotkeyMonitor {
     private var remoteKeyTap: CFMachPort?
     private var remoteKeyRunLoopSource: CFRunLoopSource?
     private var remoteKeyHeld = false
+    private var remoteKeyLastSeen: Date?
+    /// F20: not the push-to-talk key, but the remote's companion autorepeat.
+    private static let remoteNoiseKeyCode: Int64 = 96
     private var healthTimer: Timer?
     private(set) var lastHealth: Health = .stopped
 
@@ -171,7 +174,11 @@ final class HotkeyMonitor {
                     return Unmanaged.passUnretained(event)
                 }
 
-                return monitor.handleRemoteKey(cgEvent: event) ? nil : Unmanaged.passUnretained(event)
+                if monitor.handleRemoteKey(cgEvent: event) {
+                    return nil
+                }
+                monitor.logStrayKey(cgEvent: event)
+                return Unmanaged.passUnretained(event)
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         )
@@ -286,13 +293,41 @@ final class HotkeyMonitor {
     /// Same state machine, fed by the event tap (which sees F18 before any NSEvent monitor).
     @discardableResult
     func handleRemoteKey(cgEvent event: CGEvent) -> Bool {
-        guard event.getIntegerValueField(.keyboardEventKeycode) == 79 else { return false }
+        let code = event.getIntegerValueField(.keyboardEventKeycode)
+        // The remote autorepeats F20 for as long as the voice key is held. F18 brackets the
+        // press, F20 is what leaks to the focused app and beeps on every repeat — the
+        // "哒哒哒" the user hears. Only swallowed inside a press, so a real F20 still works.
+        if code == Self.remoteNoiseKeyCode {
+            let insidePress = remoteKeyHeld
+                || (remoteKeyLastSeen.map { Date().timeIntervalSince($0) < 2 } ?? false)
+            return insidePress
+        }
+        guard code == 79 else { return false }
         let chordFlags: CGEventFlags = [.maskCommand, .maskControl, .maskAlternate, .maskShift]
-        return applyRemoteKey(
-            isDown: event.type == .keyDown,
-            isRepeat: event.getIntegerValueField(.keyboardEventAutorepeat) != 0,
-            hasModifiers: !event.flags.intersection(chordFlags).isEmpty
-        )
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        let hasModifiers = !event.flags.intersection(chordFlags).isEmpty
+        // Every path that reaches the tap is logged: when the remote key leaks (or when the
+        // tap stops receiving it), this is the only place that can tell the two apart.
+        // The remote sends more than one report per press (a second keycode is one of the
+        // two ways a key can still beep after we swallow F18), and "it jumps to another
+        // window" needs a name attached, so both are logged here.
+        remoteKeyLastSeen = Date()
+        vpLog("[HotkeyMonitor] F18 via tap: \(event.type == .keyDown ? "down" : "up")"
+              + " repeat=\(isRepeat) mods=\(hasModifiers) held=\(remoteKeyHeld)"
+              + " active=\(isRecordingActive) front=\(NSWorkspace.shared.frontmostApplication?.localizedName ?? "-")")
+        return applyRemoteKey(isDown: event.type == .keyDown,
+                              isRepeat: isRepeat,
+                              hasModifiers: hasModifiers)
+    }
+
+    /// Diagnostic only: a second keycode arriving in the same press would leak past the tap
+    /// and beep, and this is the only way to see it without a HID-level sniffer.
+    func logStrayKey(cgEvent event: CGEvent) {
+        guard let seen = remoteKeyLastSeen,
+              Date().timeIntervalSince(seen) < 3 else { return }
+        vpLog("[HotkeyMonitor] stray key near F18: code=\(event.getIntegerValueField(.keyboardEventKeycode))"
+              + " type=\(event.type.rawValue) repeat=\(event.getIntegerValueField(.keyboardEventAutorepeat))"
+              + " flags=\(event.flags.rawValue)")
     }
 
     @discardableResult
