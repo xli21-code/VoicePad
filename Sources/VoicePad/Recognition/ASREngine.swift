@@ -23,18 +23,22 @@ protocol ASREngine: AnyObject {
 enum ASRPrompt {
     private static let style = "简体中文，标点完整。例如：你好，今天开会。"
 
+    /// Dictated terms, most important first — Whisper truncates the prompt, so order is
+    /// the priority list. Chinese names ride in the same budget (see docs/eval-asr-prompt.md):
+    /// private names are the one failure no later stage can repair, because neither the
+    /// rewriter nor an alias table can guess 「东方君信」from 「东方军信」.
     private static let baseTerms = [
         "VoicePad", "Magpie", "Qwen3-ASR", "SenseVoice", "sherpa-onnx", "CER",
-        "benchmark", "drawdown", "hedge", "tail latency", "p50", "p90",
-        "config schema", "prompt", "token", "API endpoint", "Deepgram",
+        "benchmark", "drawdown", "config schema", "prompt", "token", "API endpoint",
+        "Claude Code", "Codex", "QVIX", "LoginGuard", "WhisperKit", "nmem",
     ]
 
-    /// Whisper's prompt is capped (224 tokens); stay well inside it.
+    /// Whisper's prompt is capped (224 tokens, roughly 300 CJK characters); stay inside it.
     private static let maxCharacters = 300
 
     static func build(vocabulary: [String] = []) -> String {
         var terms = baseTerms
-        for term in vocabulary where term.containsLatinLetter {
+        for term in vocabulary {
             if !terms.contains(term) { terms.append(term) }
         }
 
@@ -45,14 +49,6 @@ enum ASRPrompt {
             prompt = candidate
         }
         return prompt.trimmingCharacters(in: .whitespaces)
-    }
-}
-
-private extension String {
-    /// Only Latin-script terms are worth feeding back to the decoder; Chinese words are
-    /// already handled by the acoustic model.
-    var containsLatinLetter: Bool {
-        unicodeScalars.contains { CharacterSet.letters.contains($0) && $0.isASCII }
     }
 }
 
