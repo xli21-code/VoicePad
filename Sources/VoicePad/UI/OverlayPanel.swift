@@ -9,6 +9,7 @@ final class OverlayPanel {
     private var panel: NSPanel?
     private var contentView: OverlayContentView?
     private var observation: Any?
+    private var isObserving = false
 
     private init() {}
 
@@ -71,6 +72,8 @@ final class OverlayPanel {
     }
 
     private func observeState(_ appState: AppState) {
+        guard !isObserving else { return }
+        isObserving = true
         func track() {
             withObservationTracking {
                 _ = appState.phase
@@ -178,8 +181,13 @@ private final class OverlayContentView: NSView {
             waveformView.isHidden = true
 
         case .done(let text):
-            statusLabel.stringValue = appState.polishFailed ? "✓ Pasted (polish skipped)" : "✓ Pasted"
-            statusLabel.textColor = appState.polishFailed ? .systemOrange : .systemGreen
+            if appState.pasteFailed {
+                statusLabel.stringValue = "⚠ Copied to clipboard — press ⌘V"
+                statusLabel.textColor = .systemOrange
+            } else {
+                statusLabel.stringValue = appState.polishFailed ? "✓ Pasted (polish skipped)" : "✓ Pasted"
+                statusLabel.textColor = appState.polishFailed ? .systemOrange : .systemGreen
+            }
             textLabel.stringValue = text
             waveformView.isHidden = true
 

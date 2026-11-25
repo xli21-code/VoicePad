@@ -63,13 +63,12 @@ final class TextInserter {
 
     /// Paste text by writing to clipboard and simulating Cmd+V, then restore clipboard.
     /// `replaceRange` re-selects the text captured at key-down so the paste overwrites it.
-    func paste(_ text: String, to app: NSRunningApplication?, replaceRange: (range: NSRange, expected: String)? = nil) {
+    func paste(_ text: String, to app: NSRunningApplication?, replaceRange: (range: NSRange, expected: String)? = nil, completion: ((Bool) -> Void)? = nil) {
         guard !pasteInFlight else {
             vpLog("[TextInserter] paste already in flight, dropping this one: '\(text.prefix(30))'")
             return
         }
         pasteInFlight = true
-        defer { pasteInFlight = false }
         vpLog("[TextInserter] paste called, text='\(text.prefix(50))', app=\(app?.localizedName ?? "nil")")
         let pasteboard = NSPasteboard.general
 
@@ -88,11 +87,21 @@ final class TextInserter {
 
             // Wait for activation, then simulate Cmd+V
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                guard !app.isTerminated else {
+                    self.pasteInFlight = false
+                    vpLog("[TextInserter] Target app terminated before paste — text in clipboard")
+                    completion?(false)
+                    return
+                }
                 if let replaceRange {
                     _ = self.selectOriginalRange(replaceRange.range, expected: replaceRange.expected, in: app)
                 }
                 vpLog("[TextInserter] simulating Cmd+V")
-                self.simulatePaste()
+                let pasted = self.simulatePaste()
+                self.pasteInFlight = false
+                completion?(pasted)
+
+                guard pasted else { return }
 
                 if let replaceRange {
                     let caret = replaceRange.range.location + text.count
@@ -112,7 +121,9 @@ final class TextInserter {
                 }
             }
         } else {
+            pasteInFlight = false
             vpLog("[TextInserter] Target app unavailable — text in clipboard")
+            completion?(false)
         }
     }
 
@@ -233,7 +244,8 @@ final class TextInserter {
 
     // MARK: - Key Simulation
 
-    private func simulatePaste() {
+    @discardableResult
+    private func simulatePaste() -> Bool {
         // Try CGEvent first (requires Accessibility permission)
         let source = CGEventSource(stateID: .hidSystemState)
 
@@ -245,6 +257,7 @@ final class TextInserter {
             keyDown.post(tap: .cghidEventTap)
             keyUp.post(tap: .cghidEventTap)
             vpLog("[TextInserter] pasted via CGEvent")
+            return true
         } else {
             // Fallback: AppleScript
             vpLog("[TextInserter] CGEvent unavailable, trying AppleScript")
@@ -257,8 +270,10 @@ final class TextInserter {
                 vpLog("[TextInserter] AppleScript failed: \(error)")
                 // Last resort: tell user text is in clipboard
                 vpLog("[TextInserter] text remains in clipboard, user can Cmd+V manually")
+                return false
             } else {
                 vpLog("[TextInserter] pasted via AppleScript")
+                return true
             }
         }
     }

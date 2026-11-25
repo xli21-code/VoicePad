@@ -69,6 +69,8 @@ cat > "$CONTENTS/Info.plist" << 'PLIST'
     <true/>
     <key>NSMicrophoneUsageDescription</key>
     <string>VoicePad needs microphone access to record your voice for transcription.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>VoicePad uses System Events to paste transcribed text when Accessibility is unavailable.</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
     <key>NSHighResolutionCapable</key>

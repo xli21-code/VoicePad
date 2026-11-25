@@ -25,6 +25,7 @@ final class AppState {
     }
     var audioLevels: [Float] = [] // for waveform visualization
     var polishFailed: Bool = false
+    var pasteFailed: Bool = false
     var learnResult: String? // Shown briefly in overlay after learning
 
     private let audioEngine = AudioEngine()
@@ -47,6 +48,7 @@ final class AppState {
     private var idleTimer: Timer?
     private let sleepAfterIdleDuration: TimeInterval = 30 * 60 // 30 minutes
     private var idleResetTask: Task<Void, Never>?
+    private var pendingMicError: String?
 
     /// The last text VoicePad pasted, used for correction learning.
     private(set) var lastPastedText: String?
@@ -65,6 +67,18 @@ final class AppState {
 
     /// Why the hotkey may not be working right now (trust lost, secure input field).
     var hotkeyHealth: HotkeyMonitor.Health { hotkeyMonitor.health() }
+
+    /// Whether microphone TCC permission was denied or restricted.
+    var isMicDenied: Bool {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        return status == .denied || status == .restricted
+    }
+
+    /// Whether the fallback ASR model is missing and not currently downloading.
+    var isASRModelMissing: Bool {
+        if case .downloading = phase { return false }
+        return recognizer == nil
+    }
 
     /// The selected microphone unique ID, or nil for system default.
     var selectedMicID: String? { audioEngine.selectedMicID }
@@ -131,41 +145,81 @@ final class AppState {
         case .authorized:
             break
         case .notDetermined:
-            await AVCaptureDevice.requestAccess(for: .audio)
+            let granted = await AVCaptureDevice.requestAccess(for: .audio)
+            await MainActor.run {
+                if granted {
+                    audioEngine.prepare(freshAttempt: true)
+                } else {
+                    reportMicDenied()
+                }
+            }
         case .denied, .restricted:
             await MainActor.run {
-                phase = .error("Grant microphone access in System Settings")
+                reportMicDenied()
             }
         @unknown default:
             break
         }
     }
 
+    @MainActor
+    private func reportMicDenied() {
+        let msg = "Grant microphone access in System Settings"
+        if case .downloading = phase {
+            pendingMicError = msg
+            return
+        }
+        phase = .error(msg)
+        updateOverlay()
+        scheduleIdleReset(after: 4)
+    }
+
     // MARK: - Model Management
 
     func ensureASRModel() async {
         guard !modelManager.isASRModelReady() else {
-            initRecognizer()
+            await MainActor.run { initRecognizer() }
             return
         }
 
-        await MainActor.run {
+        let canStart = await MainActor.run { () -> Bool in
+            if case .downloading = phase { return false }
+            if case .error(let existing) = phase {
+                pendingMicError = existing
+            }
             phase = .downloading("SenseVoice", 0)
+            updateOverlay()
+            return true
         }
+        guard canStart else { return }
 
         do {
             try await modelManager.downloadASRModel { [weak self] progress in
                 Task { @MainActor in
-                    self?.phase = .downloading("SenseVoice", progress)
+                    guard let self, case .downloading = self.phase else { return }
+                    self.phase = .downloading("SenseVoice", progress)
                 }
             }
             await MainActor.run {
-                phase = .idle
+                initRecognizer()
+                if let micErr = pendingMicError {
+                    pendingMicError = nil
+                    phase = .error(micErr)
+                    updateOverlay()
+                    scheduleIdleReset(after: 4)
+                } else if case .error = phase {
+                    // Preserve active startup error until scheduleIdleReset clears it
+                } else {
+                    phase = .idle
+                    updateOverlay()
+                }
             }
-            initRecognizer()
         } catch {
             await MainActor.run {
+                pendingMicError = nil
                 phase = .error("Model download failed: \(error.localizedDescription)")
+                updateOverlay()
+                scheduleIdleReset(after: 4)
             }
         }
     }
@@ -212,6 +266,11 @@ final class AppState {
             vpLog("[AppState] Not idle, skipping")
             return
         }
+        if isMicDenied {
+            vpLog("[AppState] Microphone permission denied")
+            reportMicDenied()
+            return
+        }
         guard recognizer != nil else {
             vpLog("[AppState] No recognizer!")
             phase = .error("Model not loaded")
@@ -241,6 +300,7 @@ final class AppState {
         recordingDuration = 0
         audioLevels = []
         polishFailed = false
+        pasteFailed = false
         phase = .recording
         updateOverlay()
         vpLog("[AppState] phase set to .recording")
@@ -517,6 +577,7 @@ final class AppState {
 
         // Paste the text
         await MainActor.run {
+            pasteFailed = false
             phase = .done(processedText)
             updateOverlay()
             vpLog("[AppState] pasting to app: \(previousApp?.localizedName ?? "nil")")
@@ -526,7 +587,14 @@ final class AppState {
                       let selected = dictationContext.selectedText, range.length > 0 else { return nil }
                 return (range, selected)
             }()
-            textInserter.paste(processedText, to: previousApp, replaceRange: replace)
+            textInserter.paste(processedText, to: previousApp, replaceRange: replace) { [weak self] pasted in
+                guard let self, !pasted else { return }
+                self.pasteFailed = true
+                if case .done = self.phase {
+                    self.updateOverlay()
+                    self.scheduleIdleReset(after: 4)
+                }
+            }
             lastPastedText = processedText
             lastPasteTime = Date()
 
@@ -541,7 +609,8 @@ final class AppState {
             )
         }
 
-        scheduleIdleReset(after: 1.5)
+        let resetDelay: TimeInterval = await MainActor.run { pasteFailed ? 4 : 1.5 }
+        scheduleIdleReset(after: resetDelay)
     }
 
     // MARK: - Correction Learning
@@ -551,6 +620,8 @@ final class AppState {
     /// diffs against lastPastedText, and adds discovered aliases to vocabulary.
     @MainActor
     func learnFromLastCorrection() {
+        pasteFailed = false
+        polishFailed = false
         guard let original = lastPastedText, !original.isEmpty else {
             vpLog("[AppState] No last paste to learn from")
             phase = .error("No recent paste to learn from")
@@ -683,6 +754,8 @@ final class AppState {
                 }
             }
 
+            self.pasteFailed = false
+            self.polishFailed = false
             self.phase = .done("Corrected (also in clipboard)")
             self.updateOverlay()
             self.scheduleIdleReset(after: 3)
@@ -724,9 +797,13 @@ final class AppState {
         idleResetTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(seconds))
             guard !Task.isCancelled else { return }
-            if case .idle = phase { return }
-            phase = .idle
-            updateOverlay()
+            switch phase {
+            case .error, .done:
+                phase = .idle
+                updateOverlay()
+            case .idle, .downloading, .recording, .transcribing, .polishing, .translating:
+                return
+            }
         }
     }
 }

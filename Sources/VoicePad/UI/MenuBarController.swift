@@ -118,6 +118,18 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         micItem.submenu = buildMicSubmenu()
         menu.addItem(micItem)
 
+        if appState.isMicDenied {
+            let micPermItem = NSMenuItem(title: "Microphone permission missing — click to fix", action: #selector(openMicrophoneSettings), keyEquivalent: "")
+            micPermItem.target = self
+            menu.addItem(micPermItem)
+        }
+
+        if appState.isASRModelMissing {
+            let retryItem = NSMenuItem(title: "Retry Model Download", action: #selector(retryModelDownload), keyEquivalent: "")
+            retryItem.target = self
+            menu.addItem(retryItem)
+        }
+
         // --- Learn ---
         let learnItem = NSMenuItem(title: "Learn from Last Correction", action: #selector(learnCorrection), keyEquivalent: "l")
         learnItem.target = self
@@ -288,6 +300,17 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     @objc private func openAccessibilitySettings() {
         let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")!
         NSWorkspace.shared.open(url)
+    }
+
+    @objc private func openMicrophoneSettings() {
+        let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone")!
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc private func retryModelDownload() {
+        Task {
+            await appState.ensureASRModel()
+        }
     }
 
     // MARK: - History
