@@ -2,7 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 
 /// Pastes text into the previously active app via Cmd+V.
-/// Saves and restores the clipboard so the user's existing content isn't lost.
+/// Keeps the transcribed text on the clipboard so Cmd+V can always recover it.
 final class TextInserter {
     /// One paste at a time: two overlapping pastes would interleave inside the target app.
     private var pasteInFlight = false
@@ -61,7 +61,7 @@ final class TextInserter {
         AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange)
     }
 
-    /// Paste text by writing to clipboard and simulating Cmd+V, then restore clipboard.
+    /// Paste text by writing to clipboard and simulating Cmd+V.
     /// `replaceRange` re-selects the text captured at key-down so the paste overwrites it.
     func paste(_ text: String, to app: NSRunningApplication?, replaceRange: (range: NSRange, expected: String)? = nil, completion: ((Bool) -> Void)? = nil) {
         guard !pasteInFlight else {
@@ -72,16 +72,12 @@ final class TextInserter {
         vpLog("[TextInserter] paste called, text='\(text.prefix(50))', app=\(app?.localizedName ?? "nil")")
         let pasteboard = NSPasteboard.general
 
-        // 1. Save existing clipboard contents
-        let savedItems = savePasteboard(pasteboard)
-
-        // 2. Write transcribed text to clipboard
+        // 1. Write transcribed text to clipboard
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        let changeCountAfterSet = pasteboard.changeCount
-        vpLog("[TextInserter] clipboard set (changeCount=\(changeCountAfterSet)), activating app...")
+        vpLog("[TextInserter] clipboard set, activating app...")
 
-        // 3. Activate the target app and paste
+        // 2. Activate the target app and paste
         if let app, app.isTerminated == false {
             app.activate()
 
@@ -107,16 +103,6 @@ final class TextInserter {
                     let caret = replaceRange.range.location + text.count
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                         self.moveCaret(to: caret, in: app)
-                    }
-                }
-
-                // 4. Restore clipboard after paste completes
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                    if pasteboard.changeCount == changeCountAfterSet {
-                        self.restorePasteboard(pasteboard, items: savedItems)
-                        vpLog("[TextInserter] clipboard restored")
-                    } else {
-                        vpLog("[TextInserter] clipboard was modified externally, skipping restore")
                     }
                 }
             }
@@ -209,36 +195,6 @@ final class TextInserter {
 
             vpLog("[TextInserter] replaceOriginal: all AX methods failed, text is in clipboard")
             completion?()
-        }
-    }
-
-    // MARK: - Clipboard Save/Restore
-
-    private func savePasteboard(_ pasteboard: NSPasteboard) -> [[NSPasteboard.PasteboardType: Data]] {
-        var items: [[NSPasteboard.PasteboardType: Data]] = []
-        for item in pasteboard.pasteboardItems ?? [] {
-            var dict: [NSPasteboard.PasteboardType: Data] = [:]
-            for type in item.types {
-                if let data = item.data(forType: type) {
-                    dict[type] = data
-                }
-            }
-            if !dict.isEmpty {
-                items.append(dict)
-            }
-        }
-        return items
-    }
-
-    private func restorePasteboard(_ pasteboard: NSPasteboard, items: [[NSPasteboard.PasteboardType: Data]]) {
-        guard !items.isEmpty else { return }
-        pasteboard.clearContents()
-        for dict in items {
-            let item = NSPasteboardItem()
-            for (type, data) in dict {
-                item.setData(data, forType: type)
-            }
-            pasteboard.writeObjects([item])
         }
     }
 

@@ -18,6 +18,7 @@ final class HistoryPopover {
             p.contentViewController = HistoryViewController(historyStore: store)
             popover = p
         }
+        (popover?.contentViewController as? HistoryViewController)?.refresh()
 
         guard let button = statusItem.button else { return }
         popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
@@ -87,6 +88,12 @@ private final class HistoryViewController: NSViewController {
 
         self.view = container
         loadEntries()
+    }
+
+    func refresh() {
+        guard isViewLoaded else { return }
+        searchDebounce?.invalidate()
+        loadEntries(query: searchField.stringValue)
     }
 
     private func loadEntries(query: String? = nil) {
